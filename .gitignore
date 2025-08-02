@@ -4,9 +4,6 @@
 
 # Файлы данных
 user_data/
-*.db
-*.sqlite
-*.sqlite3
 
 # Кэши и логи
 __pycache__/
