@@ -32,24 +32,33 @@ DB_PATH = 'user_data/users.db'
 
 # Создаем базу данных, если она не существует
 def init_db():
-    """Инициализация базы данных"""
-    os.makedirs('user_data', exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    # Создаем таблицу для пользователей и их настроек
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            category_id INTEGER,
-            price_threshold REAL,
-            last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
-    logger.info("База данных инициализирована")
+    """Инициализация базы данных с обработкой возможных ошибок создания папки"""
+    try:
+        if not os.path.exists('user_data'):
+            os.makedirs('user_data', exist_ok=True)
+            logger.info("Папка user_data создана")
+        else:
+            logger.info("Папка user_data уже существует")
+    except Exception as e:
+        logger.warning(f"Не удалось создать папку user_data (возможно, уже существует): {e}")
+
+    # Теперь подключаемся к базе данных
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                category_id INTEGER,
+                price_threshold REAL,
+                last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.commit()
+        conn.close()
+        logger.info("База данных инициализирована")
+    except Exception as e:
+        logger.error(f"Ошибка при создании таблицы в базе данных: {e}")
 
 # Добавляем пользователя в базу данных
 def add_user(user_id, category_id, price_threshold):
