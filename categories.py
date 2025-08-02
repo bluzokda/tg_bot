@@ -1,4 +1,3 @@
-# Получаем категории с WB API
 import requests
 
 def fetch_categories():
