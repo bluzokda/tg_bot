@@ -2,17 +2,17 @@ import os
 import logging
 from telegram import Update
 from telegram.ext import (
-    Updater, 
-    CommandHandler, 
-    MessageHandler, 
-    Filters, 
-    CallbackContext
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters
 )
 import sqlite3
 import requests
 from bs4 import BeautifulSoup
-from apscheduler.schedulers.background import BackgroundScheduler
-from datetime import datetime, timedelta
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from datetime import datetime
 
 # Настройка логов
 logging.basicConfig(
@@ -21,11 +21,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Импортируем категории из categories.py
+try:
+    from categories import CATEGORIES
+except ImportError:
+    logger.error("Не удалось импортировать CATEGORIES из categories.py")
+    # Определяем базовые категории на случай ошибки
+    CATEGORIES = {
+        3192: {"id": 3192, "name": "Ноутбуки и компьютеры", "url": "elektronika/noutbuki-pereferiya"},
+        3281: {"id": 3281, "name": "Смартфоны и гаджеты", "url": "elektronika/smartfony-i-gadzhety"},
+        617: {"id": 617, "name": "Телевизоры", "url": "elektronika/televizory"},
+        813: {"id": 813, "name": "Красота и здоровье", "url": "krasota-i-zdorove"},
+        1680: {"id": 1680, "name": "Дом и сад", "url": "dom-i-dacha"},
+        907: {"id": 907, "name": "Одежда", "url": "zhenshchinam/odezhda"},
+        908: {"id": 908, "name": "Обувь", "url": "zhenshchinam/obuv"},
+    }
+
 # Путь к базе данных
 DB_PATH = 'user_data/users.db'
 
 # Создаем базу данных, если она не существует
 def init_db():
+    os.makedirs('user_data', exist_ok=True)  # Создаем папку, если её нет
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
@@ -54,7 +71,7 @@ def add_user(user_id, category_id, price_threshold):
 def get_user(user_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
+    cursor.execute('SELECT user_id, category_id, price_threshold FROM users WHERE user_id = ?', (user_id,))
     user = cursor.fetchone()
     conn.close()
     return user
@@ -70,118 +87,206 @@ def update_last_checked(user_id):
 # Парсим страницу категории на Wildberries
 def parse_category(category_url):
     url = f"https://www.wildberries.ru/{category_url}"
-    response = requests.get(url)
-    if response.status_code == 200:
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+        
         soup = BeautifulSoup(response.text, 'html.parser')
         products = []
-        for product in soup.find_all('div', class_='product-card'):
+        
+        # Wildberries использует разные классы, пробуем основные
+        product_cards = soup.find_all('div', class_='product-card')
+        
+        for card in product_cards:
             try:
-                title = product.find('span', class_='goods-name').text.strip()
-                price = float(product.find('ins', class_='price').text.replace(' ', '').replace('₽', ''))
-                link = product.find('a')['href']
-                products.append({
-                    'title': title,
-                    'price': price,
-                    'link': f"https://www.wildberries.ru{link}"
-                })
+                # Название товара
+                name_tag = card.find('span', class_='goods-name')
+                if not name_tag:
+                    name_tag = card.find('span', class_='product-name')
+                title = name_tag.get_text(strip=True) if name_tag else "Без названия"
+                
+                # Цена (ищем в разных возможных местах)
+                price_tag = None
+                # Основная цена (новая)
+                price_tag = card.find('ins', class_='price')
+                if not price_tag:
+                    # Старая цена (если нет скидки)
+                    price_tag = card.find('span', class_='price')
+                if not price_tag:
+                    # Цена в другом блоке
+                    price_tag = card.find('span', class_='price-value')
+                
+                if price_tag:
+                    # Удаляем все символы, кроме цифр и запятой/точки
+                    price_text = price_tag.get_text(strip=True)
+                    price_clean = ''.join(c for c in price_text if c.isdigit() or c in ',.')
+                    price_clean = price_clean.replace(',', '.')
+                    price = float(price_clean) if price_clean else 0
+                else:
+                    price = 0
+                
+                # Ссылка на товар
+                link_tag = card.find('a')
+                if link_tag and 'href' in link_tag.attrs:
+                    link = link_tag['href']
+                    if link.startswith('/'):
+                        link = f"https://www.wildberries.ru{link}"
+                    else:
+                        link = f"https://www.wildberries.ru/{link}"
+                else:
+                    link = "#"
+                
+                if price > 0:
+                    products.append({
+                        'title': title,
+                        'price': price,
+                        'link': link
+                    })
+                    
             except Exception as e:
-                logger.error(f"Ошибка при парсинге продукта: {e}")
+                logger.error(f"Ошибка при парсинге карточки товара: {e}")
+                continue
+        
+        logger.info(f"Найдено {len(products)} товаров в категории {category_url}")
         return products
-    else:
-        logger.error(f"Не удалось получить страницу категории: {url}")
+        
+    except Exception as e:
+        logger.error(f"Не удалось получить страницу категории {url}: {e}")
         return []
 
-# Проверяем цены товаров
-def check_prices(context: CallbackContext):
+# Проверяем цены товаров (асинхронная версия)
+async def check_prices(context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('SELECT * FROM users')
+    cursor.execute('SELECT user_id, category_id, price_threshold FROM users')
     users = cursor.fetchall()
     conn.close()
 
     for user in users:
         user_id, category_id, price_threshold = user
         category = CATEGORIES.get(category_id)
+        
         if category:
             products = parse_category(category['url'])
+            found = 0
+            
             for product in products:
                 if product['price'] <= price_threshold:
                     message = (
-                        f"Найден товар по вашему запросу:\n"
-                        f"🏷️ Название: {product['title']}\n"
-                        f"💰 Цена: {product['price']} ₽\n"
-                        f"🔗 Ссылка: {product['link']}"
+                        f"🔥 <b>Найден товар по вашему запросу!</b>\n\n"
+                        f"🏷️ <b>Название:</b> {product['title']}\n"
+                        f"💰 <b>Цена:</b> {product['price']:,.0f} ₽\n"
+                        f"🔗 <b>Ссылка:</b> <a href='{product['link']}'>Перейти</a>"
                     )
-                    context.bot.send_message(chat_id=user_id, text=message)
-            update_last_checked(user_id)
+                    try:
+                        await context.bot.send_message(
+                            chat_id=user_id,
+                            text=message,
+                            parse_mode='HTML',
+                            disable_web_page_preview=False
+                        )
+                        found += 1
+                    except Exception as e:
+                        logger.error(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
+            
+            if found > 0:
+                update_last_checked(user_id)
+                logger.info(f"Отправлено {found} уведомлений пользователю {user_id} по категории {category_id}")
 
 # Команда /start
-def start(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text(
-        "Привет! Я помогу вам отслеживать цены на Wildberries.\n"
-        "Используйте команду /set_category, чтобы выбрать категорию товаров.\n"
-        "Используйте команду /set_price, чтобы установить порог цены."
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "👋 Привет! Я помогу вам отслеживать цены на Wildberries.\n\n"
+        "Используйте команды:\n"
+        "🔹 /set_category — выбрать категорию товаров\n"
+        "🔹 /set_price — установить порог цены\n\n"
+        "Я буду присылать уведомления, когда товары появятся по цене ниже вашей!"
     )
 
 # Команда /set_category
-def set_category(update: Update, context: CallbackContext) -> None:
-    categories_list = "\n".join([f"{cat['id']}. {cat['name']}" for cat in CATEGORIES.values()])
-    update.message.reply_text(
-        "Выберите категорию товаров:\n"
+async def set_category(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    categories_list = "\n".join([f"<b>{cat['id']}</b>. {cat['name']}" for cat in CATEGORIES.values()])
+    await update.message.reply_text(
+        "📋 Выберите категорию товаров:\n\n"
         f"{categories_list}\n\n"
-        "Введите номер категории:"
+        "Введите <b>номер</b> категории:",
+        parse_mode='HTML'
     )
-
-    # Сохраняем состояние пользователя
     context.user_data['state'] = 'set_category'
 
 # Обработка выбора категории
-def process_set_category(update: Update, context: CallbackContext) -> None:
-    user_input = update.message.text
+async def process_set_category(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_input = update.message.text.strip()
     try:
         category_id = int(user_input)
         if category_id in CATEGORIES:
             context.user_data['category_id'] = category_id
-            update.message.reply_text(
-                f"Вы выбрали категорию: {CATEGORIES[category_id]['name']}\n"
-                "Теперь установите порог цены с помощью команды /set_price."
+            await update.message.reply_text(
+                f"✅ Вы выбрали категорию: <b>{CATEGORIES[category_id]['name']}</b>\n\n"
+                "Теперь установите порог цены с помощью команды /set_price.",
+                parse_mode='HTML'
             )
         else:
-            update.message.reply_text("Неверный номер категории. Попробуйте снова.")
+            await update.message.reply_text("❌ Неверный номер категории. Попробуйте снова.")
     except ValueError:
-        update.message.reply_text("Введите корректный номер категории.")
+        await update.message.reply_text("❌ Введите корректный номер категории (целое число).")
 
 # Команда /set_price
-def set_price(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text(
-        "Введите порог цены (например, 10000):"
+async def set_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "💸 Введите максимальную цену (например, <b>15000</b>):",
+        parse_mode='HTML'
     )
-
-    # Сохраняем состояние пользователя
     context.user_data['state'] = 'set_price'
 
 # Обработка установки порога цены
-def process_set_price(update: Update, context: CallbackContext) -> None:
-    user_input = update.message.text
+async def process_set_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_input = update.message.text.strip()
     try:
         price_threshold = float(user_input)
+        if price_threshold <= 0:
+            await update.message.reply_text("❌ Цена должна быть больше 0.")
+            return
+            
         if 'category_id' in context.user_data:
             category_id = context.user_data['category_id']
-            add_user(update.effective_user.id, category_id, price_threshold)
-            update.message.reply_text(
-                f"Настроено отслеживание для категории: {CATEGORIES[category_id]['name']}\n"
-                f"Порог цены: {price_threshold} ₽"
+            user_id = update.effective_user.id
+            
+            add_user(user_id, category_id, price_threshold)
+            
+            await update.message.reply_text(
+                f"✅ <b>Настройки сохранены!</b>\n\n"
+                f"🔍 Категория: {CATEGORIES[category_id]['name']}\n"
+                f"💰 Порог цены: {price_threshold:,.0f} ₽\n\n"
+                "Я буду уведомлять вас о товарах по этой цене или ниже.",
+                parse_mode='HTML'
             )
+            # Очищаем состояние
+            if 'state' in context.user_data:
+                del context.user_data['state']
+            if 'category_id' in context.user_data:
+                del context.user_data['category_id']
+                
         else:
-            update.message.reply_text("Сначала выберите категорию с помощью команды /set_category.")
+            await update.message.reply_text(
+                "❌ Сначала выберите категорию с помощью команды /set_category."
+            )
     except ValueError:
-        update.message.reply_text("Введите корректное значение цены.")
+        await update.message.reply_text("❌ Введите корректное значение цены (например, 10000.50).")
 
-# Запуск задачи на фоне
-def start_scheduler(context: CallbackContext):
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(check_prices, 'interval', minutes=60, args=[context])
-    scheduler.start()
+# Обработка текстовых сообщений
+async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if 'state' in context.user_data:
+        state = context.user_data['state']
+        if state == 'set_category':
+            await process_set_category(update, context)
+        elif state == 'set_price':
+            await process_set_price(update, context)
+        # Состояние очищается в процессе обработки
 
 # Главная функция
 def main() -> None:
@@ -194,40 +299,38 @@ def main() -> None:
         logger.error("Токен не найден! Установите переменную окружения TOKEN.")
         return
 
-    # Создаем бота
-    updater = Updater(TOKEN)
-    dispatcher = updater.dispatcher
+    # Создаем приложение (новый способ для v20+)
+    application = Application.builder().token(TOKEN).build()
 
     # Регистрируем обработчики
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(CommandHandler("set_category", set_category))
-    dispatcher.add_handler(CommandHandler("set_price", set_price))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("set_category", set_category))
+    application.add_handler(CommandHandler("set_price", set_price))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_message))
 
-    # Обработка текстовых сообщений
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, process_message))
-
-    # Запускаем планировщик задач
-    start_scheduler(dispatcher)
-
-    # Режим работы (для Render)
-    PORT = int(os.environ.get('PORT', 10000))
-    updater.start_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=TOKEN,
-        webhook_url=f"https://your-render-app-name.onrender.com/{TOKEN}"
+    # Создаем и запускаем планировщик
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(
+        check_prices,
+        'interval',
+        minutes=60,
+        args=[application],
+        id='price_check_job'
     )
-    updater.idle()
+    scheduler.start()
+    logger.info("Планировщик задач запущен (каждые 60 минут)")
 
-# Обработка текстовых сообщений
-def process_message(update: Update, context: CallbackContext) -> None:
-    if 'state' in context.user_data:
-        state = context.user_data['state']
-        if state == 'set_category':
-            process_set_category(update, context)
-        elif state == 'set_price':
-            process_set_price(update, context)
-        del context.user_data['state']
+    # Запускаем бота
+    # Для локального запуска используем polling
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+    # Для хостинга (Render, Heroku) используйте вебхук:
+    # PORT = int(os.environ.get('PORT', 8443))
+    # application.run_webhook(
+    #     listen="0.0.0.0",
+    #     port=PORT,
+    #     webhook_url=f"https://your-render-app-name.onrender.com/{TOKEN}"
+    # )
 
 if __name__ == '__main__':
     main()
