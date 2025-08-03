@@ -163,13 +163,21 @@ def main() -> None:
         # Удаляем завершающий слэш если есть
         if webhook_url.endswith('/'):
             webhook_url = webhook_url[:-1]
-            
+        
+        # Полный URL для вебхука
+        webhook_path = f"{webhook_url}/webhook"
+        secret_token = os.getenv("WEBHOOK_SECRET", "SECRET_TOKEN")
+        
         logger.info(f"Запуск в режиме WEBHOOK на порту {port}")
+        logger.info(f"Webhook URL: {webhook_path}")
+        logger.info(f"Secret token: {secret_token[:4]}...{secret_token[-4:]}")
+        
+        # Установка вебхука
         app.run_webhook(
             listen="0.0.0.0",
             port=port,
-            webhook_url=f"{webhook_url}/webhook",
-            secret_token=os.getenv("WEBHOOK_SECRET", "SECRET_TOKEN")
+            webhook_url=webhook_path,
+            secret_token=secret_token
         )
     else:
         logger.info("Запуск в режиме POLLING")
