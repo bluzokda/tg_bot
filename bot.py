@@ -1,6 +1,8 @@
 import os
 import logging
 import requests
+import time
+import re
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -65,7 +67,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         # Поиск товаров на Wildberries
         products = search_wildberries(query)
         if not products:
-            await update.message.reply_text("😢 Товары не найдены")
+            await update.message.reply_text("😢 Товары не найдены. Попробуйте другой запрос.")
             return
             
         # Фильтрация и сортировка результатов
@@ -76,15 +78,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         filtered_products.sort(key=lambda x: x["price"])
         
         if not filtered_products:
-            await update.message.reply_text("😢 Нет товаров ниже указанной цены")
+            await update.message.reply_text(f"😢 Нет товаров ниже {target_price} руб. Попробуйте увеличить цену.")
             return
             
         # Формирование сообщения с результатами
         message = f"✅ Найдено {len(filtered_products)} товаров по вашим критериям:\n\n"
         for i, product in enumerate(filtered_products[:5], 1):
+            # Очистка названия от HTML-тегов
+            clean_name = re.sub(r'<[^>]+>', '', product['name'])
+            
             message += (
-                f"{i}. {product['name']}\n"
-                f"💵 Цена: {product['price']} руб.\n"
+                f"{i}. {clean_name}\n"
+                f"💵 Цена: {product['price']} руб. "
+                f"({product['discount']}% скидка)\n"
                 f"⭐ Рейтинг: {product['rating']} | ✨ Отзывов: {product['feedbacks']}\n"
                 f"🛒 [Купить]({product['link']})\n\n"
             )
@@ -100,47 +106,61 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text("⚠ Произошла ошибка при обработке запроса")
 
 def search_wildberries(query: str) -> list:
-    """Поиск товаров на Wildberries через API"""
-    url = "https://search.wb.ru/exactmatch/ru/common/v4/search"
+    """Поиск товаров на Wildberries через API (обновленная версия)"""
+    # Генерация уникального URL для каждого запроса
+    timestamp = int(time.time() * 1000)
+    url = f"https://search.wb.ru/exactmatch/ru/common/v4/search?TestGroup=search_2&TestID=367&appType=1&curr=rub&dest=-1257786&query={query}&resultset=catalog&sort=popular&spp=30&suppressSpellcheck=false&uclusters=1&{timestamp}"
+    
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "Accept": "application/json",
+        "Accept": "application/json, text/plain, */*",
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Connection": "keep-alive"
-    }
-    params = {
-        "query": query,
-        "resultset": "catalog",
-        "sort": "popular",
-        "dest": -1257786,  # Регион: Россия
-        "regions": "80,64,38,4,115,83,33,68,70,69,30,86,75,40,1,66,48,110,31,22,71,114",
-        "spp": 30,
-        "curr": "rub",
-        "lang": "ru",
-        "locale": "ru"
+        "Connection": "keep-alive",
+        "Referer": f"https://www.wildberries.ru/catalog/0/search.aspx?page=1&sort=popular&search={query}",
+        "Origin": "https://www.wildberries.ru",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-site"
     }
     
     try:
-        response = requests.get(url, headers=headers, params=params, timeout=15)
+        response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
         data = response.json()
         
         products = []
-        # Обрабатываем первые 20 товаров
-        for item in data.get("data", {}).get("products", [])[:20]:
-            price = item.get("salePriceU")
-            if price is None:
+        
+        # Проверка наличия данных
+        if "data" not in data or "products" not in data["data"]:
+            logger.warning(f"Нет данных в ответе API. Ответ: {data}")
+            return products
+        
+        # Обработка товаров
+        for item in data["data"]["products"]:
+            # Проверка наличия цены
+            if "salePriceU" not in item:
                 continue
                 
-            # Формируем информацию о товаре
+            # Получение данных
+            price = item["salePriceU"] // 100
+            original_price = item.get("priceU", price * 100) // 100
+            discount = 0
+            
+            # Расчет скидки
+            if original_price > price:
+                discount = int((1 - price / original_price) * 100)
+            
+            # Формирование информации о товаре
             products.append({
                 "name": item.get("name", "Без названия"),
-                "price": price // 100,  # Конвертируем в рубли
+                "price": price,
                 "rating": item.get("reviewRating", 0),
                 "feedbacks": item.get("feedbacks", 0),
+                "discount": discount,
                 "link": f"https://www.wildberries.ru/catalog/{item['id']}/detail.aspx"
             })
         
+        logger.info(f"Найдено {len(products)} товаров для запроса '{query}'")
         return products
         
     except Exception as e:
