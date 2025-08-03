@@ -17,7 +17,7 @@ if not os.path.exists(USER_DATA_DIR):
 
 # === ОБРАБОТЧИКИ КОМАНД ===
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: Context):
     """Обработчик /start"""
     user_id = update.effective_user.id
     user_data_file = os.path.join(USER_DATA_DIR, f"{user_id}.json")
