@@ -1,2 +1,3 @@
-python-telegram-bot[webhooks]==21.0.1
+python-telegram-bot[websockets]==21.0.1
 requests
+aiohttp
