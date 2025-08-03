@@ -1,9 +1,6 @@
-import datetime
-import requests
-import json
-import pandas as pd
-from retry import retry
 import os
+import logging
+import requests
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -13,176 +10,166 @@ from telegram.ext import (
     filters
 )
 
-def get_catalogs_wb() -> dict:
-    url = 'https://static-basket-01.wbbasket.ru/vol0/data/main-menu-ru-ru-v3.json'
-    headers = {'Accept': '*/*', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    return requests.get(url, headers=headers).json()
+# Настройка логирования
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-def get_data_category(catalogs_wb: dict) -> list:
-    catalog_data = []
-    if isinstance(catalogs_wb, dict) and 'childs' not in catalogs_wb:
-        catalog_data.append({
-            'name': f"{catalogs_wb['name']}",
-            'shard': catalogs_wb.get('shard', None),
-            'url': catalogs_wb['url'],
-            'query': catalogs_wb.get('query', None)
-        })
-    elif isinstance(catalogs_wb, dict):
-        catalog_data.append({
-            'name': f"{catalogs_wb['name']}",
-            'shard': catalogs_wb.get('shard', None),
-            'url': catalogs_wb['url'],
-            'query': catalogs_wb.get('query', None)
-        })
-        catalog_data.extend(get_data_category(catalogs_wb['childs']))
-    else:
-        for child in catalogs_wb:
-            catalog_data.extend(get_data_category(child))
-    return catalog_data
+# Глобальные переменные
+USER_STATE = {}
 
-def search_category_in_catalog(url: str, catalog_list: list) -> dict:
-    for catalog in catalog_list:
-        if catalog['url'] == url.split('https://www.wildberries.ru')[-1]:
-            return catalog
-
-def get_data_from_json(json_file: dict) -> list:
-    data_list = []
-    for data in json_file['data']['products']:
-        data_list.append({
-            'id': data.get('id'),
-            'name': data.get('name'),
-            'price': int(data.get("priceU", 0) / 100,
-            'salePriceU': int(data.get('salePriceU', 0) / 100,
-            'cashback': data.get('feedbackPoints'),
-            'sale': data.get('sale'),
-            'brand': data.get('brand'),
-            'rating': data.get('rating'),
-            'supplier': data.get('supplier'),
-            'supplierRating': data.get('supplierRating'),
-            'feedbacks': data.get('feedbacks'),
-            'reviewRating': data.get('reviewRating'),
-            'promoTextCard': data.get('promoTextCard'),
-            'promoTextCat': data.get('promoTextCat'),
-            'link': f'https://www.wildberries.ru/catalog/{data.get("id")}/detail.aspx?targetUrl=BP'
-        })
-    return data_list
-
-@retry(Exception, tries=-1, delay=0)
-def scrap_page(page: int, shard: str, query: str, low_price: int, top_price: int, discount: int = None) -> dict:
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0)"}
-    url = f'https://catalog.wb.ru/catalog/{shard}/catalog?appType=1&curr=rub' \
-          f'&dest=-1257786' \
-          f'&locale=ru' \
-          f'&page={page}' \
-          f'&priceU={low_price * 100};{top_price * 100}' \
-          f'&sort=popular&spp=0' \
-          f'&{query}' \
-          f'&discount={discount}'
-    r = requests.get(url, headers=headers)
-    return r.json()
-
-def save_excel(data: list, filename: str):
-    df = pd.DataFrame(data)
-    filename = f"{filename.replace('/', '_').replace(':', '')}.xlsx"
-    df.to_excel(filename, index=False)
-    return filename
-
-def parser(url: str, low_price: int = 1, top_price: int = 1000000, discount: int = 0):
-    catalog_data = get_data_category(get_catalogs_wb())
-    try:
-        category = search_category_in_catalog(url=url, catalog_list=catalog_data)
-        if not category:
-            return None, "Категория не найдена в каталоге Wildberries"
-        
-        data_list = []
-        for page in range(1, 51):
-            data = scrap_page(
-                page=page,
-                shard=category['shard'],
-                query=category['query'],
-                low_price=low_price,
-                top_price=top_price,
-                discount=discount)
-            
-            if 'data' not in data or 'products' not in data['data']:
-                break
-                
-            page_data = get_data_from_json(data)
-            if not page_data:
-                break
-            data_list.extend(page_data)
-        
-        if not data_list:
-            return None, "Товары не найдены по заданным параметрам"
-        
-        filename = save_excel(data_list, f"{category['name']}_{low_price}_{top_price}_{discount}")
-        return filename, f"Собрано {len(data_list)} товаров"
-    except Exception as e:
-        return None, f"Ошибка: {str(e)}"
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик команды /start"""
+    user = update.message.from_user
     await update.message.reply_text(
-        "Привет! Я парсер Wildberries.\n"
-        "Используй команду:\n"
-        "/parse [ссылка] [мин.цена] [макс.цена] [скидка]\n\n"
-        "Пример:\n"
-        "/parse https://www.wildberries.ru/catalog/elektronika/planshety 10000 15000 10"
+        f"Привет, {user.first_name}!\n"
+        "Я помогу найти товары на Wildberries по ценам ниже указанной.\n\n"
+        "Как пользоваться:\n"
+        "1. Введи команду /setprice и укажи максимальную цену (например: /setprice 5000)\n"
+        "2. Затем отправь мне название товара или категории для поиска"
     )
 
-async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def set_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Установка целевой цены"""
     try:
-        args = context.args
-        if len(args) < 4:
-            await update.message.reply_text("Формат команды:\n"
-                                           "/parse [ссылка] [мин.цена] [макс.цена] [скидка]")
+        user_id = update.message.from_user.id
+        price = float(context.args[0])
+        
+        if price <= 0:
+            await update.message.reply_text("Цена должна быть больше 0!")
             return
+            
+        USER_STATE[user_id] = {"target_price": price}
+        await update.message.reply_text(f"✅ Установлена целевая цена: {price} руб.\nТеперь отправь название товара для поиска.")
+        
+    except (IndexError, ValueError):
+        await update.message.reply_text("Использование: /setprice <цена> (например: /setprice 2500)")
 
-        url = args[0]
-        low_price = int(args[1])
-        top_price = int(args[2])
-        discount = int(args[3])
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработка текстовых сообщений с поисковым запросом"""
+    user_id = update.message.from_user.id
+    query = update.message.text
+    
+    if user_id not in USER_STATE or "target_price" not in USER_STATE[user_id]:
+        await update.message.reply_text("⚠ Сначала установите целевую цену с помощью /setprice")
+        return
         
-        await update.message.reply_text("⏳ Парсинг начат...")
+    target_price = USER_STATE[user_id]["target_price"]
+    
+    await update.message.reply_text(f"🔍 Ищу товары по запросу: '{query}' до {target_price} руб...")
+    
+    try:
+        products = search_wildberries(query)
+        if not products:
+            await update.message.reply_text("Товары не найдены")
+            return
+            
+        # Фильтрация и сортировка результатов
+        filtered_products = [
+            p for p in products 
+            if p["price"] <= target_price
+        ]
+        filtered_products.sort(key=lambda x: x["price"])
         
-        filename, message = parser(url, low_price, top_price, discount)
-        
-        if filename:
-            await update.message.reply_document(
-                document=open(filename, 'rb'),
-                caption=f"✅ {message}\n"
-                       f"Ссылка: {url}\n"
-                       f"Цены: {low_price}-{top_price} руб\n"
-                       f"Скидка: {discount}%"
+        if not filtered_products:
+            await update.message.reply_text("😢 Нет товаров ниже указанной цены")
+            return
+            
+        # Формирование сообщения с результатами
+        message = f"✅ Найдено {len(filtered_products)} товаров:\n\n"
+        for i, product in enumerate(filtered_products[:5], 1):
+            message += (
+                f"{i}. {product['name']}\n"
+                f"💵 Цена: {product['price']} руб. (скидка {product['discount']}%)\n"
+                f"⭐ Рейтинг: {product['rating']}\n"
+                f"🛒 [Купить]({product['link']})\n\n"
             )
-            os.remove(filename)
-        else:
-            await update.message.reply_text(f"❌ {message}")
+        
+        await update.message.reply_text(
+            message, 
+            parse_mode="Markdown",
+            disable_web_page_preview=True
+        )
+        
     except Exception as e:
-        await update.message.reply_text(f"⚠️ Ошибка: {str(e)}")
+        logger.error(f"Ошибка при поиске товаров: {e}")
+        await update.message.reply_text("⚠ Произошла ошибка при обработке запроса")
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📚 Помощь:\n\n"
-        "Формат команды:\n"
-        "/parse [ссылка] [мин.цена] [макс.цена] [скидка]\n\n"
-        "Пример:\n"
-        "/parse https://www.wildberries.ru/catalog/elektronika/planshety 5000 20000 15\n\n"
-        "Ссылка должна быть без фильтров!"
-    )
+def search_wildberries(query: str) -> list:
+    """Поиск товаров на Wildberries через API"""
+    url = "https://search.wb.ru/exactmatch/ru/common/v4/search"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept": "application/json"
+    }
+    params = {
+        "TestGroup": "no_test",
+        "TestID": "no_test",
+        "appType": 1,
+        "curr": "rub",
+        "dest": -1257786,
+        "query": query,
+        "resultset": "catalog",
+        "sort": "popular",
+        "spp": 24,
+        "suppressSpellcheck": "false"
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        
+        products = []
+        for item in data.get("data", {}).get("products", [])[:20]:
+            price = item.get("salePriceU")
+            if not price:
+                continue
+                
+            products.append({
+                "name": item.get("name", "Без названия"),
+                "price": price / 100,
+                "rating": item.get("reviewRating", 0),
+                "discount": item.get("sale", 0),
+                "link": f"https://www.wildberries.ru/catalog/{item['id']}/detail.aspx"
+            })
+        
+        return products
+        
+    except Exception as e:
+        logger.error(f"Ошибка API Wildberries: {e}")
+        return []
 
-def main():
+def main() -> None:
+    """Запуск бота"""
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
-        raise ValueError("Не задан TELEGRAM_BOT_TOKEN")
+        raise ValueError("Токен бота не найден в переменных окружения")
     
-    application = Application.builder().token(token).build()
+    app = Application.builder().token(token).build()
     
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("parse", parse_command))
-    application.add_handler(CommandHandler("help", help_command))
+    # Регистрация обработчиков
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("setprice", set_price))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
-    print("Бот запущен...")
-    application.run_polling()
+    # Режим работы (вебхук для Render.com)
+    port = int(os.environ.get("PORT", 5000))
+    webhook_url = os.getenv("RENDER_EXTERNAL_URL")
+    
+    if webhook_url:
+        # Режим вебхука для production
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            webhook_url=f"{webhook_url}/webhook",
+            secret_token=os.getenv("WEBHOOK_SECRET", "SECRET_TOKEN")
+        )
+    else:
+        # Режим поллинга для разработки
+        app.run_polling()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
