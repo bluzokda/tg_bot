@@ -82,8 +82,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         for i, product in enumerate(filtered_products[:5], 1):
             message += (
                 f"{i}. {product['name']}\n"
-                f"💵 Цена: {product['price']} руб. (скидка {product['discount']}%)\n"
-                f"⭐ Рейтинг: {product['rating']}\n"
+                f"💵 Цена: {product['price']} руб.\n"
+                f"⭐ Рейтинг: {product['rating']} | ✨ Отзывов: {product['feedbacks']}\n"
                 f"🛒 [Купить]({product['link']})\n\n"
             )
         
@@ -94,7 +94,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         
     except Exception as e:
-        logger.error(f"Ошибка при поиске товаров: {e}")
+        logger.error(f"Ошибка при поиске товаров: {e}", exc_info=True)
         await update.message.reply_text("⚠ Произошла ошибка при обработке запроса")
 
 def search_wildberries(query: str) -> list:
@@ -105,16 +105,15 @@ def search_wildberries(query: str) -> list:
         "Accept": "application/json"
     }
     params = {
-        "TestGroup": "no_test",
-        "TestID": "no_test",
-        "appType": 1,
-        "curr": "rub",
-        "dest": -1257786,
         "query": query,
         "resultset": "catalog",
         "sort": "popular",
+        "dest": -1257786,
+        "regions": 80,  # Москва и область
         "spp": 24,
-        "suppressSpellcheck": "false"
+        "curr": "rub",
+        "lang": "ru",
+        "locale": "ru"
     }
     
     try:
@@ -130,23 +129,24 @@ def search_wildberries(query: str) -> list:
                 
             products.append({
                 "name": item.get("name", "Без названия"),
-                "price": price / 100,
+                "price": price // 100,  # Цена в рублях
                 "rating": item.get("reviewRating", 0),
-                "discount": item.get("sale", 0),
+                "feedbacks": item.get("feedbacks", 0),
                 "link": f"https://www.wildberries.ru/catalog/{item['id']}/detail.aspx"
             })
         
         return products
         
     except Exception as e:
-        logger.error(f"Ошибка API Wildberries: {e}")
+        logger.error(f"Ошибка API Wildberries: {e}", exc_info=True)
         return []
 
 def main() -> None:
     """Запуск бота"""
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
-        raise ValueError("Токен бота не найден в переменных окружения")
+        logger.error("Токен бота не найден в переменных окружения")
+        return
     
     app = Application.builder().token(token).build()
     
@@ -160,7 +160,11 @@ def main() -> None:
     webhook_url = os.getenv("RENDER_EXTERNAL_URL")
     
     if webhook_url:
-        # Режим вебхука для production
+        # Удаляем завершающий слэш если есть
+        if webhook_url.endswith('/'):
+            webhook_url = webhook_url[:-1]
+            
+        logger.info(f"Запуск в режиме WEBHOOK на порту {port}")
         app.run_webhook(
             listen="0.0.0.0",
             port=port,
@@ -168,7 +172,7 @@ def main() -> None:
             secret_token=os.getenv("WEBHOOK_SECRET", "SECRET_TOKEN")
         )
     else:
-        # Режим поллинга для разработки
+        logger.info("Запуск в режиме POLLING")
         app.run_polling()
 
 if __name__ == "__main__":
