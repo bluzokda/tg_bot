@@ -17,7 +17,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Глобальные переменные
+# Глобальные переменные для хранения состояния пользователей
 USER_STATE = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -52,6 +52,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     user_id = update.message.from_user.id
     query = update.message.text
     
+    # Проверяем, установлена ли цена
     if user_id not in USER_STATE or "target_price" not in USER_STATE[user_id]:
         await update.message.reply_text("⚠ Сначала установите целевую цену с помощью /setprice")
         return
@@ -61,9 +62,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text(f"🔍 Ищу товары по запросу: '{query}' до {target_price} руб...")
     
     try:
+        # Поиск товаров на Wildberries
         products = search_wildberries(query)
         if not products:
-            await update.message.reply_text("Товары не найдены")
+            await update.message.reply_text("😢 Товары не найдены")
             return
             
         # Фильтрация и сортировка результатов
@@ -78,7 +80,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             return
             
         # Формирование сообщения с результатами
-        message = f"✅ Найдено {len(filtered_products)} товаров:\n\n"
+        message = f"✅ Найдено {len(filtered_products)} товаров по вашим критериям:\n\n"
         for i, product in enumerate(filtered_products[:5], 1):
             message += (
                 f"{i}. {product['name']}\n"
@@ -102,15 +104,17 @@ def search_wildberries(query: str) -> list:
     url = "https://search.wb.ru/exactmatch/ru/common/v4/search"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Accept": "application/json"
+        "Accept": "application/json",
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Connection": "keep-alive"
     }
     params = {
         "query": query,
         "resultset": "catalog",
         "sort": "popular",
-        "dest": -1257786,
-        "regions": 80,  # Москва и область
-        "spp": 24,
+        "dest": -1257786,  # Регион: Россия
+        "regions": "80,64,38,4,115,83,33,68,70,69,30,86,75,40,1,66,48,110,31,22,71,114",
+        "spp": 30,
         "curr": "rub",
         "lang": "ru",
         "locale": "ru"
@@ -122,14 +126,16 @@ def search_wildberries(query: str) -> list:
         data = response.json()
         
         products = []
+        # Обрабатываем первые 20 товаров
         for item in data.get("data", {}).get("products", [])[:20]:
             price = item.get("salePriceU")
-            if not price:
+            if price is None:
                 continue
                 
+            # Формируем информацию о товаре
             products.append({
                 "name": item.get("name", "Без названия"),
-                "price": price // 100,  # Цена в рублях
+                "price": price // 100,  # Конвертируем в рубли
                 "rating": item.get("reviewRating", 0),
                 "feedbacks": item.get("feedbacks", 0),
                 "link": f"https://www.wildberries.ru/catalog/{item['id']}/detail.aspx"
@@ -142,46 +148,23 @@ def search_wildberries(query: str) -> list:
         return []
 
 def main() -> None:
-    """Запуск бота"""
+    """Основная функция запуска бота"""
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         logger.error("Токен бота не найден в переменных окружения")
         return
     
-    app = Application.builder().token(token).build()
+    # Создаем приложение
+    application = Application.builder().token(token).build()
     
-    # Регистрация обработчиков
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("setprice", set_price))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    # Регистрация обработчиков команд
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("setprice", set_price))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
-    # Режим работы (вебхук для Render.com)
-    port = int(os.environ.get("PORT", 5000))
-    webhook_url = os.getenv("RENDER_EXTERNAL_URL")
-    
-    if webhook_url:
-        # Удаляем завершающий слэш если есть
-        if webhook_url.endswith('/'):
-            webhook_url = webhook_url[:-1]
-        
-        # Полный URL для вебхука
-        webhook_path = f"{webhook_url}/webhook"
-        secret_token = os.getenv("WEBHOOK_SECRET", "SECRET_TOKEN")
-        
-        logger.info(f"Запуск в режиме WEBHOOK на порту {port}")
-        logger.info(f"Webhook URL: {webhook_path}")
-        logger.info(f"Secret token: {secret_token[:4]}...{secret_token[-4:]}")
-        
-        # Установка вебхука
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            webhook_url=webhook_path,
-            secret_token=secret_token
-        )
-    else:
-        logger.info("Запуск в режиме POLLING")
-        app.run_polling()
+    # Запускаем бота в режиме поллинга
+    logger.info("🚀 Бот запущен в режиме поллинга")
+    application.run_polling()
 
 if __name__ == "__main__":
     main()
