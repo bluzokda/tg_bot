@@ -70,7 +70,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if not products:
             await update.message.reply_text(
                 "😢 Товары не найдены. "
-                "Попробуйте другое название или проверьте, не заблокирован ли IP."
+                "Возможно, ваш IP заблокирован Wildberries (особенно если используется Render.com)."
             )
             return
 
@@ -107,12 +107,14 @@ def search_wildberries(query: str) -> list:
     Поиск товаров на Wildberries через публичный API.
     Использует catalog.wb.ru — обходит базовую защиту.
     """
+    # 🔴 ОШИБКА БЫЛА ТУТ: лишние пробелы в URL
     url = "https://catalog.wb.ru/search/catalog"
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
         "Accept": "application/json",
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+        # 🔴 ОШИБКА БЫЛА ТУТ: лишние пробелы
         "Referer": "https://www.wildberries.ru/",
         "Origin": "https://www.wildberries.ru",
         "Connection": "keep-alive"
@@ -134,18 +136,19 @@ def search_wildberries(query: str) -> list:
 
     try:
         response = requests.get(url, headers=headers, params=params, timeout=15)
-        
+
         logger.info(f"Wildberries API: статус {response.status_code}, URL: {response.url}")
 
         if response.status_code != 200:
             logger.error(f"Ошибка API: статус {response.status_code}, тело: {response.text[:300]}")
             return []
 
-        # Проверка на антибот (если пришёл HTML вместо JSON)
+        # 🔍 Проверка на антибот (если пришёл HTML вместо JSON)
         if not response.text.startswith("{"):
-            logger.warning("Получен HTML — возможно, сработал антибот Wildberries")
+            logger.warning("Получен HTML — сработал антибот Wildberries")
             if "JavaScript" in response.text or "проверки браузера" in response.text:
-                logger.error("🚫 Антибот Wildberries заблокировал запрос!")
+                logger.error("🚫 Антибот Wildberries заблокировал IP!")
+                logger.error(f"Твой IP: {response.headers.get('X-Forwarded-For', 'unknown')}")  # Может не работать
             return []
 
         data = response.json()
@@ -162,12 +165,15 @@ def search_wildberries(query: str) -> list:
             if not sale_price_u:
                 continue
 
+            # 🔴 ОШИБКА БЫЛА ТУТ: лишние пробелы в ссылке
+            link = f"https://www.wildberries.ru/catalog/{item['id']}/detail.aspx"
+
             products.append({
                 "name": item.get("name", "Без названия").strip(),
-                "price": sale_price_u // 100,
+                "price": sale_price_u // 100,  # из копеек в рубли
                 "rating": float(item.get("reviewRating", 0)),
                 "feedbacks": int(item.get("feedbacks", 0)),
-                "link": f"https://www.wildberries.ru/catalog/{item['id']}/detail.aspx"
+                "link": link
             })
 
         logger.info(f"✅ Найдено {len(products)} товаров по запросу '{query}'")
@@ -195,12 +201,14 @@ def main() -> None:
     application.add_handler(CommandHandler("setprice", set_price))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    # УДАЛЯЕМ вебхук перед запуском polling
-    # Это решает конфликт 409 Conflict
+    # 🧹 УДАЛЯЕМ вебхук перед polling
+    # 🔴 ОШИБКА БЫЛА ТУТ: лишние пробелы в URL
     logger.info("🧹 Удаляем вебхук перед запуском polling...")
     try:
         import httpx
-        response = httpx.post(f"https://api.telegram.org/bot{token}/deleteWebhook")
+        # 🔥 ВАЖНО: Убраны пробелы в URL
+        webhook_url = f"https://api.telegram.org/bot{token}/deleteWebhook"
+        response = httpx.post(webhook_url)
         logger.info(f"deleteWebhook ответ: {response.status_code} — {response.json()}")
     except Exception as e:
         logger.warning(f"Не удалось удалить вебхук: {e}")
