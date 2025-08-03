@@ -1,24 +1,2 @@
-# Файлы окружения
 .env
-.env.local
-
-# Файлы данных
 user_data/
-
-# Кэши и логи
-__pycache__/
-*.pyc
-*.log
-*.cache
-
-# Настройки IDE
-.idea/
-.vscode/
-
-# Системные файлы
-.DS_Store
-Thumbs.db
-
-# Виртуальные окружения
-venv/
-env/
