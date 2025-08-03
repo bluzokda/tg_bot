@@ -1,13 +1,20 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,  # Сохраняем ContextTypes для совместимости
+    CallbackContext  # Добавляем для работы с планировщиком
+)
 import json
 import os
 from categories import CATEGORIES
-from apscheduler.schedulers.asyncio import AsyncIOScheduler  # Исправлено
-import aiohttp  # Добавлено
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import aiohttp
 import asyncio
 from bs4 import BeautifulSoup
-
 # Путь к папке с данными пользователей
 USER_DATA_DIR = "user_data"
 
