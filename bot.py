@@ -9,6 +9,7 @@ from telegram.ext import (
     MessageHandler,
     filters
 )
+import asyncio
 from aiohttp import web
 
 # Настройка логирования
@@ -159,7 +160,7 @@ def search_wildberries(query: str) -> list:
         data = response.json()
 
         products_data = data.get("data", {}).get("products", [])
-        if not products_data:
+        if not products_
             logger.info(f"Нет товаров по запросу '{query}'")
             return []
 
@@ -188,14 +189,21 @@ def search_wildberries(query: str) -> list:
 
     return []
 
-def main() -> None:
-    """Основная функция запуска бота"""
+async def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    logger.info(f"🌐 Запускаем веб-сервер на порту {port}...")
+    await site.start()
+
+async def main():
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         logger.error("❌ Токен бота не найден в переменных окружения")
         return
 
-    # Создаём приложение
+    # Создаем приложение
     application = Application.builder().token(token).build()
 
     # Регистрация обработчиков
@@ -203,24 +211,22 @@ def main() -> None:
     application.add_handler(CommandHandler("setprice", set_price))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    # 🧹 Удаляем вебхук перед polling
-    logger.info("🧹 Удаляем вебхук перед запуском polling...")
+    # Удаляем вебхук
     try:
         import httpx
         response = httpx.post(f"https://api.telegram.org/bot{token}/deleteWebhook")
+        logger.info(f"🧹 Удаляем вебхук перед запуском polling...")
         logger.info(f"deleteWebhook ответ: {response.status_code} — {response.json()}")
     except Exception as e:
         logger.warning(f"Не удалось удалить вебхук: {e}")
 
-    # 🚀 Запускаем фиктивный веб-сервер в отдельном потоке
-    import threading
-    port = int(os.environ.get("PORT", 8080))
-    logger.info(f"🌐 Запускаем веб-сервер на порту {port}...")
-    threading.Thread(target=lambda: web.run_app(web_app, host="0.0.0.0", port=port), daemon=True).start()
+    # Запускаем веб-сервер
+    loop = asyncio.get_event_loop()
+    loop.create_task(run_web_server())
 
-    # Запуск бота
+    # Запускаем Telegram бота
     logger.info("🚀 Бот запущен в режиме polling")
     application.run_polling()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
