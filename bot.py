@@ -100,51 +100,64 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text("⚠ Произошла ошибка при обработке запроса")
 
 def search_wildberries(query: str) -> list:
-    """Поиск товаров на Wildberries через API"""
-    url = "https://search.wb.ru/exactmatch/ru/common/v4/search"
+    """Поиск товаров на Wildberries через публичный каталог (обход антибота)"""
+    # Базовый URL — можно менять регион, например, 0 или 1
+    url = "https://catalog.wb.ru/search/catalog"
+    
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
         "Accept": "application/json",
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": "https://www.wildberries.ru/",
+        "Origin": "https://www.wildberries.ru",
         "Connection": "keep-alive"
     }
+    
     params = {
+        "TestGroup": "noauto",
+        "TestID": "noauto",
+        "appType": 1,
+        "curr": "rub",
+        "dest": -1257786,  # Россия
+        "lang": "ru",
+        "locale": "ru",
+        "page": 1,
         "query": query,
         "resultset": "catalog",
         "sort": "popular",
-        "dest": -1257786,  # Регион: Россия
-        "regions": "80,64,38,4,115,83,33,68,70,69,30,86,75,40,1,66,48,110,31,22,71,114",
         "spp": 30,
-        "curr": "rub",
-        "lang": "ru",
-        "locale": "ru"
+        "suppressSpellcheck": False
     }
-    
+
     try:
         response = requests.get(url, headers=headers, params=params, timeout=15)
-        response.raise_for_status()
+        
+        # Даже если статус 403, попробуем посмотреть ответ
+        if response.status_code != 200:
+            logger.error(f"Wildberries вернул статус: {response.status_code}, текст: {response.text[:200]}")
+            return []
+
         data = response.json()
         
         products = []
-        # Обрабатываем первые 20 товаров
         for item in data.get("data", {}).get("products", [])[:20]:
-            price = item.get("salePriceU")
-            if price is None:
+            price_u = item.get("priceU")  # цена в копейках
+            sale_price_u = item.get("salePriceU") or price_u
+            if not sale_price_u:
                 continue
-                
-            # Формируем информацию о товаре
+
             products.append({
                 "name": item.get("name", "Без названия"),
-                "price": price // 100,  # Конвертируем в рубли
-                "rating": item.get("reviewRating", 0),
+                "price": sale_price_u // 100,  # в рублях
+                "rating": round(item.get("reviewRating", 0), 1),
                 "feedbacks": item.get("feedbacks", 0),
                 "link": f"https://www.wildberries.ru/catalog/{item['id']}/detail.aspx"
             })
         
         return products
-        
+
     except Exception as e:
-        logger.error(f"Ошибка API Wildberries: {e}", exc_info=True)
+        logger.error(f"Ошибка при запросе к Wildberries: {e}", exc_info=True)
         return []
 
 def main() -> None:
