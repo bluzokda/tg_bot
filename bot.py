@@ -13,18 +13,12 @@ from telegram.ext import (
     filters
 )
 
-"""
-Парсер Wildberries для Telegram бота
-"""
-
 def get_catalogs_wb() -> dict:
-    """получаем полный каталог Wildberries"""
     url = 'https://static-basket-01.wbbasket.ru/vol0/data/main-menu-ru-ru-v3.json'
     headers = {'Accept': '*/*', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     return requests.get(url, headers=headers).json()
 
 def get_data_category(catalogs_wb: dict) -> list:
-    """сбор данных категорий из каталога Wildberries"""
     catalog_data = []
     if isinstance(catalogs_wb, dict) and 'childs' not in catalogs_wb:
         catalog_data.append({
@@ -47,19 +41,17 @@ def get_data_category(catalogs_wb: dict) -> list:
     return catalog_data
 
 def search_category_in_catalog(url: str, catalog_list: list) -> dict:
-    """проверка пользовательской ссылки на наличии в каталоге"""
     for catalog in catalog_list:
         if catalog['url'] == url.split('https://www.wildberries.ru')[-1]:
             return catalog
 
 def get_data_from_json(json_file: dict) -> list:
-    """извлекаем из json данные"""
     data_list = []
     for data in json_file['data']['products']:
         data_list.append({
             'id': data.get('id'),
             'name': data.get('name'),
-            'price': int(data.get("priceU", 0) / 100),
+            'price': int(data.get("priceU", 0) / 100,
             'salePriceU': int(data.get('salePriceU', 0) / 100,
             'cashback': data.get('feedbackPoints'),
             'sale': data.get('sale'),
@@ -77,7 +69,6 @@ def get_data_from_json(json_file: dict) -> list:
 
 @retry(Exception, tries=-1, delay=0)
 def scrap_page(page: int, shard: str, query: str, low_price: int, top_price: int, discount: int = None) -> dict:
-    """Сбор данных со страниц"""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0)"}
     url = f'https://catalog.wb.ru/catalog/{shard}/catalog?appType=1&curr=rub' \
           f'&dest=-1257786' \
@@ -91,14 +82,12 @@ def scrap_page(page: int, shard: str, query: str, low_price: int, top_price: int
     return r.json()
 
 def save_excel(data: list, filename: str):
-    """сохранение результата в excel файл"""
     df = pd.DataFrame(data)
-    filename = f"{filename.replace('/', '_')}.xlsx"
+    filename = f"{filename.replace('/', '_').replace(':', '')}.xlsx"
     df.to_excel(filename, index=False)
     return filename
 
 def parser(url: str, low_price: int = 1, top_price: int = 1000000, discount: int = 0):
-    """основная функция парсинга"""
     catalog_data = get_data_category(get_catalogs_wb())
     try:
         category = search_category_in_catalog(url=url, catalog_list=catalog_data)
@@ -115,6 +104,9 @@ def parser(url: str, low_price: int = 1, top_price: int = 1000000, discount: int
                 top_price=top_price,
                 discount=discount)
             
+            if 'data' not in data or 'products' not in data['data']:
+                break
+                
             page_data = get_data_from_json(data)
             if not page_data:
                 break
@@ -128,23 +120,20 @@ def parser(url: str, low_price: int = 1, top_price: int = 1000000, discount: int
     except Exception as e:
         return None, f"Ошибка: {str(e)}"
 
-# ====== Telegram Bot Handlers ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка команды /start"""
     await update.message.reply_text(
         "Привет! Я парсер Wildberries.\n"
-        "Используй команду /parse с параметрами:\n"
+        "Используй команду:\n"
         "/parse [ссылка] [мин.цена] [макс.цена] [скидка]\n\n"
         "Пример:\n"
         "/parse https://www.wildberries.ru/catalog/elektronika/planshety 10000 15000 10"
     )
 
 async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка команды /parse"""
     try:
         args = context.args
         if len(args) < 4:
-            await update.message.reply_text("Недостаточно параметров. Формат:\n"
+            await update.message.reply_text("Формат команды:\n"
                                            "/parse [ссылка] [мин.цена] [макс.цена] [скидка]")
             return
 
@@ -153,14 +142,11 @@ async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         top_price = int(args[2])
         discount = int(args[3])
         
-        # Уведомление о начале обработки
-        await update.message.reply_text("⏳ Начинаю парсинг... Это может занять несколько минут")
+        await update.message.reply_text("⏳ Парсинг начат...")
         
-        # Вызов парсера
         filename, message = parser(url, low_price, top_price, discount)
         
         if filename:
-            # Отправка файла
             await update.message.reply_document(
                 document=open(filename, 'rb'),
                 caption=f"✅ {message}\n"
@@ -168,7 +154,6 @@ async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                        f"Цены: {low_price}-{top_price} руб\n"
                        f"Скидка: {discount}%"
             )
-            # Удаление временного файла
             os.remove(filename)
         else:
             await update.message.reply_text(f"❌ {message}")
@@ -176,34 +161,26 @@ async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⚠️ Ошибка: {str(e)}")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка команды /help"""
     await update.message.reply_text(
-        "📚 Помощь по использованию бота:\n\n"
-        "1. Найти нужную категорию на сайте Wildberries\n"
-        "2. Скопировать URL без фильтров\n"
-        "3. Использовать команду:\n"
+        "📚 Помощь:\n\n"
+        "Формат команды:\n"
         "/parse [ссылка] [мин.цена] [макс.цена] [скидка]\n\n"
         "Пример:\n"
         "/parse https://www.wildberries.ru/catalog/elektronika/planshety 5000 20000 15\n\n"
-        "Бот соберет товары в указанном ценовом диапазоне с минимальной скидкой."
+        "Ссылка должна быть без фильтров!"
     )
 
 def main():
-    """Запуск бота"""
-    # Получение токена из переменных окружения
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
-        raise ValueError("Не задан TELEGRAM_BOT_TOKEN в переменных окружения")
+        raise ValueError("Не задан TELEGRAM_BOT_TOKEN")
     
-    # Создание Application
     application = Application.builder().token(token).build()
     
-    # Регистрация обработчиков команд
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("parse", parse_command))
     application.add_handler(CommandHandler("help", help_command))
     
-    # Запуск бота
     print("Бот запущен...")
     application.run_polling()
 
