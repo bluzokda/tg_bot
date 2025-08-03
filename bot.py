@@ -1,3 +1,11 @@
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters
+)
 import datetime
 import requests
 import json
