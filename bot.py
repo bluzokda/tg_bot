@@ -50,7 +50,7 @@ async def set_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработка текстовых сообщений с поисковым запросом"""
     user_id = update.message.from_user.id
-    query = update.message.text
+    query = update.message.text.strip()
     
     # Проверяем, установлена ли цена
     if user_id not in USER_STATE or "target_price" not in USER_STATE[user_id]:
@@ -103,7 +103,7 @@ def search_wildberries(query: str) -> list:
     """Поиск товаров на Wildberries через API"""
     url = "https://search.wb.ru/exactmatch/ru/common/v4/search"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
         "Accept": "application/json",
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
         "Connection": "keep-alive"
