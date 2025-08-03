@@ -9,6 +9,7 @@ from telegram.ext import (
     MessageHandler,
     filters
 )
+from aiohttp import web
 
 # Настройка логирования
 logging.basicConfig(
@@ -20,6 +21,13 @@ logger = logging.getLogger(__name__)
 # Глобальные переменные для хранения состояния пользователей
 USER_STATE = {}
 
+# Фиктивное веб-приложение для Render.com
+web_app = web.Application()
+async def health_check(request):
+    return web.Response(text="OK", status=200)
+web_app.router.add_get("/", health_check)
+web_app.router.add_get("/health", health_check)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик команды /start"""
     user = update.message.from_user
@@ -28,7 +36,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Я помогу найти товары на Wildberries по ценам ниже указанной.\n\n"
         "Как пользоваться:\n"
         "1. Введи команду /setprice и укажи максимальную цену (например: /setprice 5000)\n"
-        "2. Затем отправь мне название товара или категории для поиска"
+        "2. Затем отправь мне название товара для поиска"
     )
 
 async def set_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -107,14 +115,12 @@ def search_wildberries(query: str) -> list:
     Поиск товаров на Wildberries через публичный API.
     Использует catalog.wb.ru — обходит базовую защиту.
     """
-    # 🔴 ОШИБКА БЫЛА ТУТ: лишние пробелы в URL
     url = "https://catalog.wb.ru/search/catalog"
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
         "Accept": "application/json",
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-        # 🔴 ОШИБКА БЫЛА ТУТ: лишние пробелы
         "Referer": "https://www.wildberries.ru/",
         "Origin": "https://www.wildberries.ru",
         "Connection": "keep-alive"
@@ -143,12 +149,11 @@ def search_wildberries(query: str) -> list:
             logger.error(f"Ошибка API: статус {response.status_code}, тело: {response.text[:300]}")
             return []
 
-        # 🔍 Проверка на антибот (если пришёл HTML вместо JSON)
+        # Проверка на антибот (если пришёл HTML вместо JSON)
         if not response.text.startswith("{"):
             logger.warning("Получен HTML — сработал антибот Wildberries")
             if "JavaScript" in response.text or "проверки браузера" in response.text:
                 logger.error("🚫 Антибот Wildberries заблокировал IP!")
-                logger.error(f"Твой IP: {response.headers.get('X-Forwarded-For', 'unknown')}")  # Может не работать
             return []
 
         data = response.json()
@@ -165,15 +170,12 @@ def search_wildberries(query: str) -> list:
             if not sale_price_u:
                 continue
 
-            # 🔴 ОШИБКА БЫЛА ТУТ: лишние пробелы в ссылке
-            link = f"https://www.wildberries.ru/catalog/{item['id']}/detail.aspx"
-
             products.append({
                 "name": item.get("name", "Без названия").strip(),
-                "price": sale_price_u // 100,  # из копеек в рубли
+                "price": sale_price_u // 100,
                 "rating": float(item.get("reviewRating", 0)),
                 "feedbacks": int(item.get("feedbacks", 0)),
-                "link": link
+                "link": f"https://www.wildberries.ru/catalog/{item['id']}/detail.aspx"
             })
 
         logger.info(f"✅ Найдено {len(products)} товаров по запросу '{query}'")
@@ -201,17 +203,20 @@ def main() -> None:
     application.add_handler(CommandHandler("setprice", set_price))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    # 🧹 УДАЛЯЕМ вебхук перед polling
-    # 🔴 ОШИБКА БЫЛА ТУТ: лишние пробелы в URL
+    # 🧹 Удаляем вебхук перед polling
     logger.info("🧹 Удаляем вебхук перед запуском polling...")
     try:
         import httpx
-        # 🔥 ВАЖНО: Убраны пробелы в URL
-        webhook_url = f"https://api.telegram.org/bot{token}/deleteWebhook"
-        response = httpx.post(webhook_url)
+        response = httpx.post(f"https://api.telegram.org/bot{token}/deleteWebhook")
         logger.info(f"deleteWebhook ответ: {response.status_code} — {response.json()}")
     except Exception as e:
         logger.warning(f"Не удалось удалить вебхук: {e}")
+
+    # 🚀 Запускаем фиктивный веб-сервер в отдельном потоке
+    import threading
+    port = int(os.environ.get("PORT", 8080))
+    logger.info(f"🌐 Запускаем веб-сервер на порту {port}...")
+    threading.Thread(target=lambda: web.run_app(web_app, host="0.0.0.0", port=port), daemon=True).start()
 
     # Запуск бота
     logger.info("🚀 Бот запущен в режиме polling")
