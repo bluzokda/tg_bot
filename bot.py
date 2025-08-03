@@ -5,8 +5,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     MessageHandler,
     filters,
-    ContextTypes,  # Сохраняем ContextTypes для совместимости
-    CallbackContext  # Добавляем для работы с планировщиком
+    ContextTypes,
 )
 import json
 import os
@@ -15,6 +14,15 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import aiohttp
 import asyncio
 from bs4 import BeautifulSoup
+import sys  # Для диагностики
+
+# Диагностика версий
+print("=== SYSTEM INFORMATION ===")
+print(f"Python version: {sys.version}")
+print(f"Current working directory: {os.getcwd()}")
+print("Directory contents:", os.listdir())
+print("==========================")
+
 # Путь к папке с данными пользователей
 USER_DATA_DIR = "user_data"
 
@@ -24,7 +32,7 @@ if not os.path.exists(USER_DATA_DIR):
 
 # === ОБРАБОТЧИКИ КОМАНД ===
 
-async def start(update: Update, context: Context):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик /start"""
     user_id = update.effective_user.id
     user_data_file = os.path.join(USER_DATA_DIR, f"{user_id}.json")
@@ -138,6 +146,7 @@ async def check_prices():
     for filename in os.listdir(USER_DATA_DIR):
         if not filename.endswith(".json"):
             continue
+            
         user_id = int(filename.split(".")[0])
         user_data_file = os.path.join(USER_DATA_DIR, filename)
 
@@ -150,6 +159,7 @@ async def check_prices():
             category = CATEGORIES.get(category_id)
 
             if not category or not max_price:
+                print(f"Пропускаем пользователя {user_id}: отсутствуют данные о категории или цене")
                 continue
 
             # Формируем URL
@@ -157,42 +167,53 @@ async def check_prices():
             url = f"{base_url}{category['url']}?{category['query']}"
 
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
                 "Accept-Language": "ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3"
             }
 
+            print(f"Проверяем цены для пользователя {user_id} в категории {category['name']}...")
+            
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers, timeout=15) as response:
                     if response.status != 200:
-                        print(f"Не удалось загрузить {url}")
+                        print(f"Не удалось загрузить {url} (статус {response.status})")
                         continue
                     
                     html = await response.text()
                     soup = BeautifulSoup(html, "html.parser")
                     
-                    # Новые селекторы для Wildberries 2024
+                    # Селекторы для Wildberries
                     products = soup.find_all("article", class_="product-card")
                     
                     notified = False
                     for product in products[:10]:
-                        # Обрабатываем два формата цен (со скидкой и без)
-                        price_tag = product.find("span", class_="price__lower-price") or product.find("span", class_="price__wrap")
+                        # Цена
+                        price_tag = product.find("ins", class_="price__lower-price") or product.find("span", class_="price__lower-price")
+                        if not price_tag:
+                            continue
+                            
+                        # Название
                         name_tag = product.find("span", class_="product-card__name")
+                        # Ссылка
                         link_tag = product.find("a", class_="product-card__link")
                         
-                        if not price_tag or not name_tag or not link_tag:
+                        if not name_tag or not link_tag:
                             continue
                             
                         try:
-                            # Извлекаем цену из текста
-                            price_text = price_tag.get_text(strip=True).replace(" ", "").replace("₽", "").replace("\xa0", "").split("₽")[0]
+                            # Обработка цены
+                            price_text = price_tag.get_text(strip=True)
+                            price_text = price_text.replace(" ", "").replace("₽", "").replace("\xa0", "").split("₽")[0]
                             price = float(price_text)
+                            
                             name = name_tag.get_text(strip=True)
                             product_url = base_url + link_tag["href"]
                         except Exception as e:
                             print(f"Ошибка парсинга товара: {e}")
                             continue
+                            
+                        print(f"Товар: {name} | Цена: {price} | Макс. цена: {max_price}")
                             
                         if price <= max_price:
                             try:
@@ -205,6 +226,7 @@ async def check_prices():
                                     parse_mode="Markdown",
                                     disable_web_page_preview=False
                                 )
+                                print(f"Отправлено уведомление пользователю {user_id}")
                             except Exception as e:
                                 print(f"Ошибка отправки сообщения пользователю {user_id}: {e}")
                             notified = True
