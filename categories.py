@@ -3,7 +3,6 @@ import requests
 def fetch_categories():
     """Получаем категории с WB API"""
     try:
-        # Основной URL для получения меню
         url = "https://static-basket-01.wbbasket.ru/vol0/data/main-menu-ru-ru-v3.json"
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -14,17 +13,20 @@ def fetch_categories():
             data = response.json()
             categories = []
             
-            # Парсим структуру меню и извлекаем категории
-            for section in data:
+            # Рекурсивная функция для обхода вложенных категорий
+            def parse_categories(section):
                 if 'childs' in section:
                     for child in section['childs']:
-                        if 'shard' in child and 'url' in child:
-                            categories.append({
-                                'id': child.get('id', len(categories)),
-                                'name': child.get('name', 'Без названия'),
-                                'url': child.get('shard', ''),
-                                'query': child.get('query', '')
-                            })
+                        categories.append({
+                            'id': child.get('id', len(categories)),
+                            'name': child.get('name', 'Без названия'),
+                            'url': child.get('shard', ''),
+                            'query': child.get('query', '')
+                        })
+                        parse_categories(child)
+            
+            for section in data:
+                parse_categories(section)
             
             return categories
             
