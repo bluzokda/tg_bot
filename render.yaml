@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: wb-price-bot               # Название сервиса (можешь изменить)
+    runtime: python
+    pythonVersion: "3.11"            # 🔥 Ключевая строка! Не 3.13!
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false                  # true, если хочешь хранить токен здесь, но лучше в интерфейсе
