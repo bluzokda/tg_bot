@@ -6,6 +6,7 @@ from categories import CATEGORIES
 from apscheduler.schedulers.background import BackgroundScheduler
 from bs4 import BeautifulSoup
 import requests
+import asyncio  # Добавлено: нужно для запуска асинхронного кода
 
 # Путь к папке с данными пользователей
 USER_DATA_DIR = "user_data"
@@ -115,18 +116,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         context.user_data['state'] = None
 
+
 # === ПРОВЕРКА ЦЕН ===
 
 def check_prices():
     """Фоновая проверка цен"""
-    # Получаем токен
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         print("Ошибка: TELEGRAM_BOT_TOKEN не установлен")
         return
 
     from telegram import Bot
-
     bot = Bot(token=token)
 
     for filename in os.listdir(USER_DATA_DIR):
@@ -146,8 +146,8 @@ def check_prices():
             if not category or not max_price:
                 continue
 
-            # Формируем URL для поиска
-            base_url = "https://www.wildberries.ru"
+            # Формируем URL
+            base_url = "https://www.wildberries.ru"  # ✅ Убраны лишние пробелы
             url = f"{base_url}{category['url']}?{category['query']}"
 
             headers = {
@@ -156,6 +156,7 @@ def check_prices():
 
             response = requests.get(url, headers=headers, timeout=15)
             if response.status_code != 200:
+                print(f"Не удалось загрузить {url}")
                 continue
 
             soup = BeautifulSoup(response.text, "html.parser")
@@ -165,37 +166,47 @@ def check_prices():
             for product in products[:10]:  # Проверяем первые 10 товаров
                 price_tag = product.find("ins", class_="price")
                 name_tag = product.find("span", class_="goods-name")
+                link_tag = product.find("a", href=True)
 
-                if not price_tag or not name_tag:
+                if not price_tag or not name_tag or not link_tag:
                     continue
 
                 try:
                     price_text = price_tag.get_text(strip=True).replace(" ", "").replace("₽", "")
                     price = float(price_text)
                     name = name_tag.get_text(strip=True)
-                except:
+                    product_url = base_url + link_tag["href"]
+                except Exception as e:
+                    print(f"Ошибка парсинга товара: {e}")
                     continue
 
                 if price <= max_price:
-                    link = product.find("a", href=True)
-                    product_url = base_url + link["href"] if link else base_url
-
-                    await bot.send_message(
-                        chat_id=user_id,
-                        text=f"🔥 *Цена упала!* \n"
-                             f"📦 {name}\n"
-                             f"💰 {price} ₽\n"
-                             f"🔗 [Смотреть товар]({product_url})",
-                        parse_mode="Markdown",
-                        disable_web_page_preview=False
-                    )
+                    # ✅ Отправка сообщения через asyncio.run()
+                    try:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        loop.run_until_complete(
+                            bot.send_message(
+                                chat_id=user_id,
+                                text=f"🔥 *Цена упала!* \n"
+                                     f"📦 {name}\n"
+                                     f"💰 {price} ₽\n"
+                                     f"🔗 [Смотреть товар]({product_url})",
+                                parse_mode="Markdown",
+                                disable_web_page_preview=False
+                            )
+                        )
+                        loop.close()
+                    except Exception as e:
+                        print(f"Ошибка отправки сообщения пользователю {user_id}: {e}")
                     notified = True
-                    break  # Одно уведомление на проверку — чтобы не спамить
+                    break  # Одно уведомление на пользователя за проверку
 
             if not notified:
                 print(f"Для пользователя {user_id} нет подходящих товаров.")
         except Exception as e:
-            print(f"Ошибка при проверке для {user_id}: {e}")
+            print(f"Ошибка при обработке пользователя {filename}: {e}")
+
 
 # === ЗАПУСК БОТА ===
 
