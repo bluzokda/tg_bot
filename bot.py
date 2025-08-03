@@ -1,3 +1,9 @@
+import datetime
+import requests
+import json
+import pandas as pd
+from retry import retry
+import os
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -6,57 +12,16 @@ from telegram.ext import (
     MessageHandler,
     filters
 )
-import datetime
-import requests
-import json
-import pandas as pd
-from retry import retry
-# pip install openpyxl
-# pip install xlsxwriter
 
 """
-ОБНОВЛЕН: на 28.11.2024 работает исправно!
-
-Канал разработки парсеров ВБ: https://t.me/timur_parsing_blog
-https://vk.com/parsers_wildberries  # группа ВК парсера ВБ
-https://vk.com/happython  # группа ВК где можете заказывать парсеры и скрипты
-https://happypython.ru/2022/07/21/parser-wildberries/  # ссылка на обучающую статью парсинга WB
-
-Парсер wildberries по ссылке на каталог (указывать без фильтров)
-
-Возможные фильтра(для ручного ввода): 
-    -нижняя цена
-    -верхняя цена
-    -скидка (%)
-Данные которые собирает парсер:
-            'id': артикуд,
-            'name': название,
-            'price': цена,
-            'salePriceU': цена со скидкой,
-            'cashback': кэшбек за отзыв,
-            'sale': % скидки,
-            'brand': бренд,
-            'rating': рейтинг товара,
-            'supplier': продавец,
-            'supplierRating': рейтинг продавца,
-            'feedbacks': отзывы,
-            'reviewRating': рейтинг по отзывам,
-            'promoTextCard': промо текст карточки,
-            'promoTextCat': промо текст категории
+Парсер Wildberries для Telegram бота
 """
-
 
 def get_catalogs_wb() -> dict:
     """получаем полный каталог Wildberries"""
-    # url = 'https://www.wildberries.ru/webapi/menu/main-menu-ru-ru.json'   # устарела ссылка апи
-    # url = 'https://static-basket-01.wb.ru/vol0/data/main-menu-ru-ru-v2.json'   # устарела ссылка апи
-    # url = 'https://static-basket-01.wbbasket.ru/vol0/data/main-menu-ru-ru-v2.json'   # устарела ссылка апи
     url = 'https://static-basket-01.wbbasket.ru/vol0/data/main-menu-ru-ru-v3.json'
     headers = {'Accept': '*/*', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    # with open('wb_goods_list.json', 'w', encoding='UTF-8') as file:
-    #     json.dump(requests.get(url, headers=headers).json(), file, indent=4, ensure_ascii=False)
     return requests.get(url, headers=headers).json()
-
 
 def get_data_category(catalogs_wb: dict) -> list:
     """сбор данных категорий из каталога Wildberries"""
@@ -81,53 +46,34 @@ def get_data_category(catalogs_wb: dict) -> list:
             catalog_data.extend(get_data_category(child))
     return catalog_data
 
-
 def search_category_in_catalog(url: str, catalog_list: list) -> dict:
     """проверка пользовательской ссылки на наличии в каталоге"""
     for catalog in catalog_list:
         if catalog['url'] == url.split('https://www.wildberries.ru')[-1]:
-            print(f'найдено совпадение: {catalog["name"]}')
             return catalog
-
 
 def get_data_from_json(json_file: dict) -> list:
     """извлекаем из json данные"""
     data_list = []
     for data in json_file['data']['products']:
-        sku = data.get('id')
-        name = data.get('name')
-        price = int(data.get("priceU") / 100)
-        salePriceU = int(data.get('salePriceU') / 100)
-        cashback = data.get('feedbackPoints')
-        sale = data.get('sale')
-        brand = data.get('brand')
-        rating = data.get('rating')
-        supplier = data.get('supplier')
-        supplierRating = data.get('supplierRating')
-        feedbacks = data.get('feedbacks')
-        reviewRating = data.get('reviewRating')
-        promoTextCard = data.get('promoTextCard')
-        promoTextCat = data.get('promoTextCat')
         data_list.append({
-            'id': sku,
-            'name': name,
-            'price': price,
-            'salePriceU': salePriceU,
-            'cashback': cashback,
-            'sale': sale,
-            'brand': brand,
-            'rating': rating,
-            'supplier': supplier,
-            'supplierRating': supplierRating,
-            'feedbacks': feedbacks,
-            'reviewRating': reviewRating,
-            'promoTextCard': promoTextCard,
-            'promoTextCat': promoTextCat,
+            'id': data.get('id'),
+            'name': data.get('name'),
+            'price': int(data.get("priceU", 0) / 100),
+            'salePriceU': int(data.get('salePriceU', 0) / 100,
+            'cashback': data.get('feedbackPoints'),
+            'sale': data.get('sale'),
+            'brand': data.get('brand'),
+            'rating': data.get('rating'),
+            'supplier': data.get('supplier'),
+            'supplierRating': data.get('supplierRating'),
+            'feedbacks': data.get('feedbacks'),
+            'reviewRating': data.get('reviewRating'),
+            'promoTextCard': data.get('promoTextCard'),
+            'promoTextCat': data.get('promoTextCat'),
             'link': f'https://www.wildberries.ru/catalog/{data.get("id")}/detail.aspx?targetUrl=BP'
         })
-        # print(f"SKU:{data['id']} Цена: {int(data['salePriceU'] / 100)} Название: {data['name']} Рейтинг: {data['rating']}")
     return data_list
-
 
 @retry(Exception, tries=-1, delay=0)
 def scrap_page(page: int, shard: str, query: str, low_price: int, top_price: int, discount: int = None) -> dict:
@@ -142,44 +88,25 @@ def scrap_page(page: int, shard: str, query: str, low_price: int, top_price: int
           f'&{query}' \
           f'&discount={discount}'
     r = requests.get(url, headers=headers)
-    print(f'Статус: {r.status_code} Страница {page} Идет сбор...')
     return r.json()
-
 
 def save_excel(data: list, filename: str):
     """сохранение результата в excel файл"""
     df = pd.DataFrame(data)
-    writer = pd.ExcelWriter(f'{filename}.xlsx')
-    df.to_excel(writer, sheet_name='data', index=False)
-    # указываем размеры каждого столбца в итоговом файле
-    writer.sheets['data'].set_column(0, 1, width=10)
-    writer.sheets['data'].set_column(1, 2, width=34)
-    writer.sheets['data'].set_column(2, 3, width=8)
-    writer.sheets['data'].set_column(3, 4, width=9)
-    writer.sheets['data'].set_column(4, 5, width=8)
-    writer.sheets['data'].set_column(5, 6, width=4)
-    writer.sheets['data'].set_column(6, 7, width=20)
-    writer.sheets['data'].set_column(7, 8, width=6)
-    writer.sheets['data'].set_column(8, 9, width=23)
-    writer.sheets['data'].set_column(9, 10, width=13)
-    writer.sheets['data'].set_column(10, 11, width=11)
-    writer.sheets['data'].set_column(11, 12, width=12)
-    writer.sheets['data'].set_column(12, 13, width=15)
-    writer.sheets['data'].set_column(13, 14, width=15)
-    writer.sheets['data'].set_column(14, 15, width=67)
-    writer.close()
-    print(f'Все сохранено в {filename}.xlsx\n')
-
+    filename = f"{filename.replace('/', '_')}.xlsx"
+    df.to_excel(filename, index=False)
+    return filename
 
 def parser(url: str, low_price: int = 1, top_price: int = 1000000, discount: int = 0):
-    """основная функция"""
-    # получаем данные по заданному каталогу
+    """основная функция парсинга"""
     catalog_data = get_data_category(get_catalogs_wb())
     try:
-        # поиск введенной категории в общем каталоге
         category = search_category_in_catalog(url=url, catalog_list=catalog_data)
+        if not category:
+            return None, "Категория не найдена в каталоге Wildberries"
+        
         data_list = []
-        for page in range(1, 51):  # вб отдает 50 страниц товара (раньше было 100)
+        for page in range(1, 51):
             data = scrap_page(
                 page=page,
                 shard=category['shard'],
@@ -187,51 +114,98 @@ def parser(url: str, low_price: int = 1, top_price: int = 1000000, discount: int
                 low_price=low_price,
                 top_price=top_price,
                 discount=discount)
-            print(f'Добавлено позиций: {len(get_data_from_json(data))}')
-            if len(get_data_from_json(data)) > 0:
-                data_list.extend(get_data_from_json(data))
-            else:
+            
+            page_data = get_data_from_json(data)
+            if not page_data:
                 break
-        print(f'Сбор данных завершен. Собрано: {len(data_list)} товаров.')
-        # сохранение найденных данных
-        save_excel(data_list, f'{category["name"]}_from_{low_price}_to_{top_price}')
-        print(f'Ссылка для проверки: {url}?priceU={low_price * 100};{top_price * 100}&discount={discount}')
-    except TypeError:
-        print('Ошибка! Возможно не верно указан раздел. Удалите все доп фильтры с ссылки')
-    except PermissionError:
-        print('Ошибка! Вы забыли закрыть созданный ранее excel файл. Закройте и повторите попытку')
+            data_list.extend(page_data)
+        
+        if not data_list:
+            return None, "Товары не найдены по заданным параметрам"
+        
+        filename = save_excel(data_list, f"{category['name']}_{low_price}_{top_price}_{discount}")
+        return filename, f"Собрано {len(data_list)} товаров"
+    except Exception as e:
+        return None, f"Ошибка: {str(e)}"
 
+# ====== Telegram Bot Handlers ======
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка команды /start"""
+    await update.message.reply_text(
+        "Привет! Я парсер Wildberries.\n"
+        "Используй команду /parse с параметрами:\n"
+        "/parse [ссылка] [мин.цена] [макс.цена] [скидка]\n\n"
+        "Пример:\n"
+        "/parse https://www.wildberries.ru/catalog/elektronika/planshety 10000 15000 10"
+    )
+
+async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка команды /parse"""
+    try:
+        args = context.args
+        if len(args) < 4:
+            await update.message.reply_text("Недостаточно параметров. Формат:\n"
+                                           "/parse [ссылка] [мин.цена] [макс.цена] [скидка]")
+            return
+
+        url = args[0]
+        low_price = int(args[1])
+        top_price = int(args[2])
+        discount = int(args[3])
+        
+        # Уведомление о начале обработки
+        await update.message.reply_text("⏳ Начинаю парсинг... Это может занять несколько минут")
+        
+        # Вызов парсера
+        filename, message = parser(url, low_price, top_price, discount)
+        
+        if filename:
+            # Отправка файла
+            await update.message.reply_document(
+                document=open(filename, 'rb'),
+                caption=f"✅ {message}\n"
+                       f"Ссылка: {url}\n"
+                       f"Цены: {low_price}-{top_price} руб\n"
+                       f"Скидка: {discount}%"
+            )
+            # Удаление временного файла
+            os.remove(filename)
+        else:
+            await update.message.reply_text(f"❌ {message}")
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Ошибка: {str(e)}")
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка команды /help"""
+    await update.message.reply_text(
+        "📚 Помощь по использованию бота:\n\n"
+        "1. Найти нужную категорию на сайте Wildberries\n"
+        "2. Скопировать URL без фильтров\n"
+        "3. Использовать команду:\n"
+        "/parse [ссылка] [мин.цена] [макс.цена] [скидка]\n\n"
+        "Пример:\n"
+        "/parse https://www.wildberries.ru/catalog/elektronika/planshety 5000 20000 15\n\n"
+        "Бот соберет товары в указанном ценовом диапазоне с минимальной скидкой."
+    )
+
+def main():
+    """Запуск бота"""
+    # Получение токена из переменных окружения
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        raise ValueError("Не задан TELEGRAM_BOT_TOKEN в переменных окружения")
+    
+    # Создание Application
+    application = Application.builder().token(token).build()
+    
+    # Регистрация обработчиков команд
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("parse", parse_command))
+    application.add_handler(CommandHandler("help", help_command))
+    
+    # Запуск бота
+    print("Бот запущен...")
+    application.run_polling()
 
 if __name__ == '__main__':
-    """данные для теста. собераем товар с раздела велосипеды в ценовой категории от 1тыс, до 100тыс, со скидкой 10%"""
-    # url = 'https://www.wildberries.ru/catalog/sport/vidy-sporta/velosport/velosipedy'
-
-
-    # url = 'https://www.wildberries.ru/catalog/elektronika/planshety'  # сюда вставляем вашу ссылку на категорию
-    # low_price = 10000  # нижний порог цены
-    # top_price = 15000  # верхний порог цены
-    # discount = 0  # скидка в % поиск идут от N-ой скидки и выше
-    # start = datetime.datetime.now()  # запишем время старта
-    #
-    # parser(url=url, low_price=low_price, top_price=top_price, discount=discount)
-    #
-    # end = datetime.datetime.now()  # запишем время завершения кода
-    # total = end - start  # расчитаем время затраченное на выполнение кода
-    # print("Затраченное время:" + str(total))
-
-    # """для exe приложения(чтобы сделать exe файл - pip install auto_py_to_exe для установки, для запуска auto-py-to-exe)"""
-    while True:
-        try:
-            print('По вопросу парсинга Wildberries, отзывам и предложениям пишите в https://vk.com/happython')
-            print('Заказать разработку парсера Вайлдберрис:  https://vk.com/atomnuclear'
-                  '\nИли в группу ВК: https://vk.com/parsers_wildberries (рекомендую подписаться)\n')
-            url = input('Введите ссылку на категорию без фильтров для сбора(или "q" для выхода):\n')
-            if url == 'q':
-                break
-            low_price = int(input('Введите минимальную сумму товара: '))
-            top_price = int(input('Введите максимульную сумму товара: '))
-            discount = int(input('Введите минимальную скидку(введите 0 если без скидки): '))
-            parser(url=url, low_price=low_price, top_price=top_price, discount=discount)
-        except:
-            print('произошла ошибка данных при вводе, проверте правильность введенных данных,\n'
-                  'Перезапуск...')
+    main()
