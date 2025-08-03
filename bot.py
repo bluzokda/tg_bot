@@ -68,7 +68,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         # Поиск товаров на Wildberries
         products = search_wildberries(query)
         if not products:
-            await update.message.reply_text("😢 Товары не найдены. Попробуйте другое название.")
+            await update.message.reply_text(
+                "😢 Товары не найдены. "
+                "Попробуйте другое название или проверьте, не заблокирован ли IP."
+            )
             return
 
         # Фильтрация и сортировка результатов
@@ -102,7 +105,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 def search_wildberries(query: str) -> list:
     """
     Поиск товаров на Wildberries через публичный API.
-    Использует catalog.wb.ru — не требует JS, обходит базовую защиту.
+    Использует catalog.wb.ru — обходит базовую защиту.
     """
     url = "https://catalog.wb.ru/search/catalog"
 
@@ -118,70 +121,64 @@ def search_wildberries(query: str) -> list:
     params = {
         "appType": 1,
         "curr": "rub",
-        "dest": -1257786,           # Россия
+        "dest": -1257786,
         "lang": "ru",
         "locale": "ru",
         "page": 1,
         "query": query.strip(),
         "resultset": "catalog",
         "sort": "popular",
-        "spp": 30,                  # Кол-во показов на странице
+        "spp": 30,
         "suppressSpellcheck": False
     }
 
     try:
         response = requests.get(url, headers=headers, params=params, timeout=15)
         
-        # Логируем статус и начало тела ответа
-        logger.info(f"Wildberries API: {response.status_code} для запроса '{query}'")
-        
+        logger.info(f"Wildberries API: статус {response.status_code}, URL: {response.url}")
+
         if response.status_code != 200:
             logger.error(f"Ошибка API: статус {response.status_code}, тело: {response.text[:300]}")
             return []
 
-        # Проверка на антибот (если в ответе HTML вместо JSON)
+        # Проверка на антибот (если пришёл HTML вместо JSON)
         if not response.text.startswith("{"):
-            logger.warning("Получен HTML — возможно, сработал антибот")
+            logger.warning("Получен HTML — возможно, сработал антибот Wildberries")
             if "JavaScript" in response.text or "проверки браузера" in response.text:
                 logger.error("🚫 Антибот Wildberries заблокировал запрос!")
             return []
 
         data = response.json()
 
-        # Проверка структуры ответа
         products_data = data.get("data", {}).get("products", [])
         if not products_data:
             logger.info(f"Нет товаров по запросу '{query}'")
             return []
 
         products = []
-        for item in products_data[:20]:  # Берём максимум 20
-            # Основная цена и скидка
-            price_u = item.get("priceU")  # обычная цена в копейках
+        for item in products_data[:20]:
+            price_u = item.get("priceU")
             sale_price_u = item.get("salePriceU") or price_u
             if not sale_price_u:
                 continue
 
-            # Формируем данные
-            product = {
+            products.append({
                 "name": item.get("name", "Без названия").strip(),
-                "price": sale_price_u // 100,  # в рублях
+                "price": sale_price_u // 100,
                 "rating": float(item.get("reviewRating", 0)),
                 "feedbacks": int(item.get("feedbacks", 0)),
                 "link": f"https://www.wildberries.ru/catalog/{item['id']}/detail.aspx"
-            }
-            products.append(product)
+            })
 
-        logger.info(f"Найдено {len(products)} товаров по запросу '{query}'")
+        logger.info(f"✅ Найдено {len(products)} товаров по запросу '{query}'")
         return products
 
     except requests.exceptions.RequestException as e:
-        logger.error(f"Ошибка сети при запросе к Wildberries: {e}")
+        logger.error(f"Ошибка сети: {e}")
     except Exception as e:
-        logger.error(f"Неожиданная ошибка при парсинге: {e}", exc_info=True)
+        logger.error(f"Ошибка парсинга: {e}", exc_info=True)
 
     return []
-
 
 def main() -> None:
     """Основная функция запуска бота"""
@@ -190,7 +187,7 @@ def main() -> None:
         logger.error("❌ Токен бота не найден в переменных окружения")
         return
 
-    # Создаем приложение
+    # Создаём приложение
     application = Application.builder().token(token).build()
 
     # Регистрация обработчиков
@@ -198,10 +195,19 @@ def main() -> None:
     application.add_handler(CommandHandler("setprice", set_price))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    # Запуск бота
-    logger.info("🚀 Бот запущен и готов к работе")
-    application.run_polling()
+    # УДАЛЯЕМ вебхук перед запуском polling
+    # Это решает конфликт 409 Conflict
+    logger.info("🧹 Удаляем вебхук перед запуском polling...")
+    try:
+        import httpx
+        response = httpx.post(f"https://api.telegram.org/bot{token}/deleteWebhook")
+        logger.info(f"deleteWebhook ответ: {response.status_code} — {response.json()}")
+    except Exception as e:
+        logger.warning(f"Не удалось удалить вебхук: {e}")
 
+    # Запуск бота
+    logger.info("🚀 Бот запущен в режиме polling")
+    application.run_polling()
 
 if __name__ == "__main__":
     main()
