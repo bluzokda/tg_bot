@@ -1,2 +1,5 @@
-.env
-user_data/
+.idea/
+*.xlsx
+*.json
+output/
+venv
