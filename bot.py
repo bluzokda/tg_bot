@@ -109,8 +109,7 @@ def search_wildberries(query: str) -> list:
     """
     Поиск товаров на Wildberries через мобильное API
     """
-    url = "https://mobile-app.wildberries.ru/catalog/search"
-
+    url = "https://search.wb.ru/exactmatch/ru/common/v4/search"
     headers = {
         "User-Agent": "Wildberries/6.12.0 (iPhone; iOS 16.5; Scale/3.00)",
         "Accept": "application/json",
