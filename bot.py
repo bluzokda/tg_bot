@@ -28,7 +28,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Я помогу найти товары на Wildberries по ценам ниже указанной.\n\n"
         "Как пользоваться:\n"
         "1. Введи команду /setprice и укажи максимальную цену (например: /setprice 5000)\n"
-        "2. Затем отправь мне название товара или категории для поиска"
+        "2. Затем отправь мне название товара для поиска"
     )
 
 async def set_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -151,7 +151,7 @@ def search_wildberries(query: str) -> list:
         data = response.json()
 
         products_data = data.get("data", {}).get("products", [])
-        if not products_data:
+        if not products_
             logger.info(f"Нет товаров по запросу '{query}'")
             return []
 
@@ -227,35 +227,6 @@ async def main():
     finally:
         await application.updater.stop()
         await application.stop()
-
-    # Устанавливаем вебхук
-    await application.bot.set_webhook(url=webhook_full_url)
-
-    # Создаём веб-сервер
-    app = web.Application()
-    application.bot_data["web_app"] = app
-
-    # Добавляем вебхук-роут
-    application.register_webhook_endpoint(webhook_path)
-
-    # Запускаем веб-сервер
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-
-    logger.info(f"🌐 Бот запущен в режиме вебхука на порту {port}")
-    logger.info(f"🔗 Webhook URL: {webhook_full_url}")
-
-    # Держим бота в работе
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Остановка бота...")
-    finally:
-        await application.stop()
-        await runner.cleanup()
 
 if __name__ == "__main__":
     import asyncio
