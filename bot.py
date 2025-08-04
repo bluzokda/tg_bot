@@ -1,6 +1,8 @@
 import os
 import logging
 import requests
+import signal
+import sys
 from aiohttp import web
 from telegram import Update
 from telegram.ext import (
@@ -178,8 +180,20 @@ def search_wildberries(query: str) -> list:
         logger.error(f"Ошибка при поиске: {e}", exc_info=True)
         return []
 
+async def health_check(request):
+    """Health check endpoint"""
+    return web.Response(text="OK", status=200)
+
+async def webhook_handler(request):
+    """Обработчик входящих вебхуков от Telegram"""
+    application = request.app['application']
+    data = await request.json()
+    update = Update.de_json(data, application.bot)
+    await application.process_update(update)
+    return web.Response()
+
 async def main():
-    """Запуск бота в режиме Webhook с health check"""
+    """Запуск бота в режиме Webhook"""
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     webhook_url = os.getenv("RENDER_EXTERNAL_URL")  # например: https://tg-bot-ccn2.onrender.com
     port = int(os.getenv("PORT", 10000))
@@ -212,17 +226,12 @@ async def main():
 
     # Создаём веб-сервер
     app = web.Application()
-
-    # Добавляем health check
-    async def health_check(request):
-        return web.Response(text="OK", status=200)
-
+    app['application'] = application
+    
+    # Регистрируем обработчики
     app.router.add_get("/", health_check)
     app.router.add_get("/health", health_check)
-
-    # Подключаем вебхук
-    application.bot_data["web_app"] = app
-    application.register_webhook_endpoint(webhook_path)
+    app.router.add_post(webhook_path, webhook_handler)
 
     # Запускаем веб-сервер
     runner = web.AppRunner(app)
@@ -233,16 +242,30 @@ async def main():
     logger.info(f"🌐 Бот запущен в режиме вебхука на порту {port}")
     logger.info(f"🔗 Webhook URL: {webhook_full_url}")
 
-    # Держим бота в работе
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Остановка бота...")
-    finally:
-        await application.stop()
-        await runner.cleanup()
+    # Обработка сигналов для корректного завершения
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    
+    # Для Linux/MacOS
+    if sys.platform != "win32":
+        loop.add_signal_handler(signal.SIGTERM, stop_event.set)
+        loop.add_signal_handler(signal.SIGINT, stop_event.set)
+    # Для Windows
+    else:
+        def signal_handler(signum):
+            stop_event.set()
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
 
+    # Ожидаем сигнал остановки
+    await stop_event.wait()
+    
+    # Корректная остановка
+    logger.info("Остановка бота...")
+    await site.stop()
+    await runner.cleanup()
+    await application.stop()
+    await application.shutdown()
 
 if __name__ == "__main__":
     import asyncio
