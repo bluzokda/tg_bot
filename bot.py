@@ -178,7 +178,7 @@ def search_wildberries(query: str) -> list:
         return []
 
 async def main():
-    """Основная функция запуска бота в режиме Webhook"""
+    """Запуск бота в режиме Webhook"""
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     webhook_url = os.getenv("RENDER_EXTERNAL_URL")  # например: https://tg-bot-ccn2.onrender.com
     port = int(os.getenv("PORT", 10000))
@@ -198,25 +198,37 @@ async def main():
     application.add_handler(CommandHandler("setprice", set_price))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    # Запускаем веб-сервер
-    webhook_path = "/webhook"  # Telegram будет стучаться сюда
-    app = web.Application()
-    app.router.add_post(webhook_path, application.update_queue.put)
+    # Полный URL вебхука
+    webhook_path = "/webhook"
+    webhook_full_url = f"{webhook_url}{webhook_path}"
+
+    # Запускаем бот в режиме вебхука
+    await application.initialize()
+    await application.start()
 
     # Устанавливаем вебхук
-    await application.bot.set_webhook(url=f"{webhook_url}{webhook_path}")
+    await application.bot.set_webhook(url=webhook_full_url)
+
+    # Создаём веб-сервер
+    app = web.Application()
+    application.bot_data["web_app"] = app
+
+    # Добавляем вебхук-роут
+    application.register_webhook_endpoint(webhook_path)
 
     # Запускаем веб-сервер
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
-    logger.info(f"🌐 Запускаем веб-сервер на порту {port}, webhook: {webhook_url}{webhook_path}")
     await site.start()
 
-    # Ждём завершения (для Render это нужно)
+    logger.info(f"🌐 Бот запущен в режиме вебхука на порту {port}")
+    logger.info(f"🔗 Webhook URL: {webhook_full_url}")
+
+    # Держим бота в работе
     try:
         while True:
-            await asyncio.sleep(3600)  # Keep alive
+            await asyncio.sleep(3600)
     except (KeyboardInterrupt, SystemExit):
         logger.info("Остановка бота...")
     finally:
