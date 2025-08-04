@@ -5,11 +5,12 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
     envVars:
-    # TELEGRAM_BOT_TOKEN будет задан вручную в панели Render
-    - key: RENDER_EXTERNAL_URL
-      value: https://tg-bot-ccn2.onrender.com
-    - key: PORT
-      value: 10000
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: RENDER_EXTERNAL_URL
+        value: https://tg-bot-ccn2.onrender.com
+      - key: PORT
+        value: 10000
     ports:
       - port: 10000
         protocol: http
