@@ -151,7 +151,7 @@ def search_wildberries(query: str) -> list:
         data = response.json()
 
         products_data = data.get("data", {}).get("products", [])
-        if not products_data:
+        if not products_
             logger.info(f"Нет товаров по запросу '{query}'")
             return []
 
@@ -211,13 +211,13 @@ async def main():
 
     # Создаём веб-сервер
     app = web.Application()
-    
+
     # Добавляем health check
-    async def health(request):
+    async def health_check(request):
         return web.Response(text="OK", status=200)
-    
-    app.router.add_get("/", health)
-    app.router.add_get("/health", health)
+
+    app.router.add_get("/", health_check)
+    app.router.add_get("/health", health_check)
 
     # Подключаем вебхук
     application.bot_data["web_app"] = app
