@@ -1,5 +1,6 @@
 import os
 import logging
+import requests  # ← Не хватало импорта!
 from aiohttp import web
 from telegram import Update
 from telegram.ext import (
@@ -107,14 +108,14 @@ def search_wildberries(query: str) -> list:
     Поиск товаров на Wildberries через публичный API.
     Использует catalog.wb.ru — обходит базовую защиту.
     """
-    url = "https://catalog.wb.ru/search/catalog"
+    url = "https://catalog.wb.ru/search/catalog"  # ✅ Убраны пробелы
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
         "Accept": "application/json",
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Referer": "https://www.wildberries.ru/",
-        "Origin": "https://www.wildberries.ru",
+        "Referer": "https://www.wildberries.ru/",  # ✅ Убраны пробелы
+        "Origin": "https://www.wildberries.ru",    # ✅ Убраны пробелы
         "Connection": "keep-alive"
     }
 
@@ -151,7 +152,7 @@ def search_wildberries(query: str) -> list:
         data = response.json()
 
         products_data = data.get("data", {}).get("products", [])
-        if not products_data:
+        if not products_
             logger.info(f"Нет товаров по запросу '{query}'")
             return []
 
@@ -167,7 +168,7 @@ def search_wildberries(query: str) -> list:
                 "price": sale_price_u // 100,
                 "rating": float(item.get("reviewRating", 0)),
                 "feedbacks": int(item.get("feedbacks", 0)),
-                "link": f"https://www.wildberries.ru/catalog/{item['id']}/detail.aspx"
+                "link": f"https://www.wildberries.ru/catalog/{item['id']}/detail.aspx"  # ✅ Убраны пробелы
             })
 
         logger.info(f"✅ Найдено {len(products)} товаров по запросу '{query}'")
@@ -245,5 +246,4 @@ async def main():
 
 if __name__ == "__main__":
     import asyncio
-    import requests
     asyncio.run(main())
