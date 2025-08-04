@@ -1,6 +1,6 @@
 import os
 import logging
-import requests
+from aiohttp import web
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -9,8 +9,6 @@ from telegram.ext import (
     MessageHandler,
     filters
 )
-import asyncio
-from aiohttp import web
 
 # Настройка логирования
 logging.basicConfig(
@@ -22,13 +20,6 @@ logger = logging.getLogger(__name__)
 # Глобальные переменные для хранения состояния пользователей
 USER_STATE = {}
 
-# Фиктивное веб-приложение для Render.com
-web_app = web.Application()
-async def health_check(request):
-    return web.Response(text="OK", status=200)
-web_app.router.add_get("/", health_check)
-web_app.router.add_get("/health", health_check)
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик команды /start"""
     user = update.message.from_user
@@ -37,7 +28,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Я помогу найти товары на Wildberries по ценам ниже указанной.\n\n"
         "Как пользоваться:\n"
         "1. Введи команду /setprice и укажи максимальную цену (например: /setprice 5000)\n"
-        "2. Затем отправь мне название товара для поиска"
+        "2. Затем отправь мне название товара или категории для поиска"
     )
 
 async def set_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -182,28 +173,24 @@ def search_wildberries(query: str) -> list:
         logger.info(f"✅ Найдено {len(products)} товаров по запросу '{query}'")
         return products
 
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Ошибка сети: {e}")
     except Exception as e:
-        logger.error(f"Ошибка парсинга: {e}", exc_info=True)
-
-    return []
-
-async def run_web_server():
-    port = int(os.environ.get("PORT", 8080))
-    runner = web.AppRunner(web_app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    logger.info(f"🌐 Запускаем веб-сервер на порту {port}...")
-    await site.start()
+        logger.error(f"Ошибка при поиске: {e}", exc_info=True)
+        return []
 
 async def main():
+    """Основная функция запуска бота в режиме Webhook"""
     token = os.getenv("TELEGRAM_BOT_TOKEN")
+    webhook_url = os.getenv("RENDER_EXTERNAL_URL")  # например: https://tg-bot-ccn2.onrender.com
+    port = int(os.getenv("PORT", 10000))
+
     if not token:
         logger.error("❌ Токен бота не найден в переменных окружения")
         return
+    if not webhook_url:
+        logger.error("❌ RENDER_EXTERNAL_URL не задан")
+        return
 
-    # Создаем приложение
+    # Создаём приложение
     application = Application.builder().token(token).build()
 
     # Регистрация обработчиков
@@ -211,22 +198,32 @@ async def main():
     application.add_handler(CommandHandler("setprice", set_price))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    # Удаляем вебхук
-    try:
-        import httpx
-        response = httpx.post(f"https://api.telegram.org/bot{token}/deleteWebhook")
-        logger.info(f"🧹 Удаляем вебхук перед запуском polling...")
-        logger.info(f"deleteWebhook ответ: {response.status_code} — {response.json()}")
-    except Exception as e:
-        logger.warning(f"Не удалось удалить вебхук: {e}")
+    # Запускаем веб-сервер
+    webhook_path = "/webhook"  # Telegram будет стучаться сюда
+    app = web.Application()
+    app.router.add_post(webhook_path, application.update_queue.put)
+
+    # Устанавливаем вебхук
+    await application.bot.set_webhook(url=f"{webhook_url}{webhook_path}")
 
     # Запускаем веб-сервер
-    loop = asyncio.get_event_loop()
-    loop.create_task(run_web_server())
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    logger.info(f"🌐 Запускаем веб-сервер на порту {port}, webhook: {webhook_url}{webhook_path}")
+    await site.start()
 
-    # Запускаем Telegram бота
-    logger.info("🚀 Бот запущен в режиме polling")
-    application.run_polling()
+    # Ждём завершения (для Render это нужно)
+    try:
+        while True:
+            await asyncio.sleep(3600)  # Keep alive
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Остановка бота...")
+    finally:
+        await application.stop()
+        await runner.cleanup()
 
 if __name__ == "__main__":
+    import asyncio
+    import requests
     asyncio.run(main())
