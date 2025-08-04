@@ -107,48 +107,42 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 def search_wildberries(query: str) -> list:
     """
-    Поиск товаров на Wildberries через публичный API.
-    Использует catalog.wb.ru — обходит базовую защиту.
+    Поиск товаров на Wildberries через мобильное API
     """
-    url = "https://catalog.wb.ru/search/catalog"
+    url = "https://mobile-app.wildberries.ru/catalog/search"
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "User-Agent": "Wildberries/6.12.0 (iPhone; iOS 16.5; Scale/3.00)",
         "Accept": "application/json",
-        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Referer": "https://www.wildberries.ru/",
-        "Origin": "https://www.wildberries.ru",
-        "Connection": "keep-alive"
+        "Accept-Language": "ru-RU;q=1.0",
+        "Connection": "keep-alive",
+        "Referer": "https://mobile-app.wildberries.ru/",
+        "X-Requested-With": "XMLHttpRequest"
     }
 
     params = {
-        "appType": 1,
-        "curr": "rub",
-        "dest": -1257786,
+        "query": query.strip(),
+        "page": 1,
+        "sort": "popular",
         "lang": "ru",
         "locale": "ru",
-        "page": 1,
-        "query": query.strip(),
-        "resultset": "catalog",
-        "sort": "popular",
-        "spp": 30,
-        "suppressSpellcheck": False
+        "curr": "rub",
+        "version": "6.12.0",
+        "device": "iPhone14,3"
     }
 
     try:
         response = requests.get(url, headers=headers, params=params, timeout=15)
-
+        
         logger.info(f"Wildberries API: статус {response.status_code}, URL: {response.url}")
 
         if response.status_code != 200:
             logger.error(f"Ошибка API: статус {response.status_code}, тело: {response.text[:300]}")
             return []
 
-        # Проверка на антибот (если пришёл HTML вместо JSON)
+        # Проверка на антибот
         if not response.text.startswith("{"):
             logger.warning("Получен HTML — сработал антибот Wildberries")
-            if "JavaScript" in response.text or "проверки браузера" in response.text:
-                logger.error("🚫 Антибот Wildberries заблокировал IP!")
             return []
 
         data = response.json()
@@ -160,14 +154,13 @@ def search_wildberries(query: str) -> list:
 
         products = []
         for item in products_data[:20]:
-            price_u = item.get("priceU")
-            sale_price_u = item.get("salePriceU") or price_u
-            if not sale_price_u:
+            sale_price = item.get("salePriceU")
+            if not sale_price:
                 continue
 
             products.append({
                 "name": item.get("name", "Без названия").strip(),
-                "price": sale_price_u // 100,
+                "price": sale_price // 100,
                 "rating": float(item.get("reviewRating", 0)),
                 "feedbacks": int(item.get("feedbacks", 0)),
                 "link": f"https://www.wildberries.ru/catalog/{item['id']}/detail.aspx"
