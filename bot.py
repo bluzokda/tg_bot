@@ -152,7 +152,7 @@ def search_wildberries(query: str) -> list:
         data = response.json()
 
         products_data = data.get("data", {}).get("products", [])
-        if not products_
+        if not products_data:
             logger.info(f"Нет товаров по запросу '{query}'")
             return []
 
