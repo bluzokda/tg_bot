@@ -180,7 +180,7 @@ def search_wildberries(query: str) -> list:
 async def main():
     """Запуск бота в режиме Webhook"""
     token = os.getenv("TELEGRAM_BOT_TOKEN")
-    webhook_url = os.getenv("RENDER_EXTERNAL_URL")  # например: https://tg-bot-ccn2.onrender.com
+    webhook_url = os.getenv("RENDER_EXTERNAL_URL")
     port = int(os.getenv("PORT", 10000))
 
     if not token:
@@ -199,12 +199,34 @@ async def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     # Полный URL вебхука
-    webhook_path = "/webhook"
-    webhook_full_url = f"{webhook_url}{webhook_path}"
+    webhook_url = f"{webhook_url}/webhook"
 
     # Запускаем бот в режиме вебхука
     await application.initialize()
     await application.start()
+
+    # Устанавливаем вебхук
+    await application.bot.set_webhook(url=webhook_url)
+
+    # Запускаем веб-сервер
+    await application.updater.start_webhook(
+        listen="0.0.0.0",
+        port=port,
+        webhook_url=webhook_url,
+    )
+
+    logger.info(f"🌐 Бот запущен в режиме вебхука на порту {port}")
+    logger.info(f"🔗 Webhook URL: {webhook_url}")
+
+    # Держим бота в работе
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Остановка бота...")
+    finally:
+        await application.updater.stop()
+        await application.stop()
 
     # Устанавливаем вебхук
     await application.bot.set_webhook(url=webhook_full_url)
