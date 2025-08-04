@@ -178,9 +178,9 @@ def search_wildberries(query: str) -> list:
         return []
 
 async def main():
-    """Запуск бота в режиме Webhook"""
+    """Запуск бота в режиме Webhook с health check"""
     token = os.getenv("TELEGRAM_BOT_TOKEN")
-    webhook_url = os.getenv("RENDER_EXTERNAL_URL")
+    webhook_url = os.getenv("RENDER_EXTERNAL_URL")  # например: https://tg-bot-ccn2.onrender.com
     port = int(os.getenv("PORT", 10000))
 
     if not token:
@@ -199,24 +199,38 @@ async def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     # Полный URL вебхука
-    webhook_url = f"{webhook_url}/webhook"
+    webhook_path = "/webhook"
+    webhook_full_url = f"{webhook_url}{webhook_path}"
 
-    # Запускаем бот в режиме вебхука
+    # Инициализация и запуск
     await application.initialize()
     await application.start()
 
     # Устанавливаем вебхук
-    await application.bot.set_webhook(url=webhook_url)
+    await application.bot.set_webhook(url=webhook_full_url)
+
+    # Создаём веб-сервер
+    app = web.Application()
+    
+    # Добавляем health check
+    async def health(request):
+        return web.Response(text="OK", status=200)
+    
+    app.router.add_get("/", health)
+    app.router.add_get("/health", health)
+
+    # Подключаем вебхук
+    application.bot_data["web_app"] = app
+    application.register_webhook_endpoint(webhook_path)
 
     # Запускаем веб-сервер
-    await application.updater.start_webhook(
-        listen="0.0.0.0",
-        port=port,
-        webhook_url=webhook_url,
-    )
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
 
     logger.info(f"🌐 Бот запущен в режиме вебхука на порту {port}")
-    logger.info(f"🔗 Webhook URL: {webhook_url}")
+    logger.info(f"🔗 Webhook URL: {webhook_full_url}")
 
     # Держим бота в работе
     try:
@@ -225,8 +239,9 @@ async def main():
     except (KeyboardInterrupt, SystemExit):
         logger.info("Остановка бота...")
     finally:
-        await application.updater.stop()
         await application.stop()
+        await runner.cleanup()
+
 
 if __name__ == "__main__":
     import asyncio
